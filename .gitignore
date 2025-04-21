@@ -1,0 +1,34 @@
+# Ignore all files in these folders:
+thesis_main_files/datasets/*
+thesis_main_files/jupyter_notebooks/*
+thesis_main_files/images/*
+thesis_main_files/results/*
+
+# But keep the folders themselves
+!thesis_main_files/datasets/.gitkeep
+!thesis_main_files/jupyter_notebooks/.gitkeep
+!thesis_main_files/images/.gitkeep
+!thesis_main_files/results/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+.conda/
+
+# PyCharm
+.idea/
+
+# macOS
+.DS_Store
+
+# Datasets / logs
+dataset/
+*.log

@@ -1,0 +1,4 @@
+touch thesis_main_files/datasets/.gitkeep
+touch thesis_main_files/jupyter_notebooks/.gitkeep
+touch thesis_main_files/images/.gitkeep
+touch thesis_main_files/results/.gitkeep
