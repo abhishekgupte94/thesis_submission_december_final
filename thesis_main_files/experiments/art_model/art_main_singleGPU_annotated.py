@@ -1,6 +1,18 @@
-from thesis_main_files.main_files.model_training.training_art_wrapper_singleGPU import TrainingPipelineWrapper
+# Ensure the root of the project is in sys.path
 import os
+import sys
+import os
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+
+
+from thesis_main_files.main_files.model_training.training_art_wrapper_singleGPU import TrainingPipelineWrapper
+# import os
 import torch
+
+
 
 def main():
     # -------------------- CONFIG --------------------
