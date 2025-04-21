@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 # from main_files.preprocessing.art_avdf.art.audio_preprocessorart import AudioPreprocessor
-# from main_files.preprocessing.art_avdf.art.video_preprocessorart_Fanet import VideoPreprocessor_FANET
+# from main_files.preprocessing.art_avdf.art.video_preprocessorart_Fanet_gpu import VideoPreprocessor_FANET
 from thesis_main_files.models.art_avdf.encoders.audio_articulatory_encoder import AudioArticulatoryEncoder
 from thesis_main_files.models.art_avdf.encoders.video_articulatory_encoder import VideoArticulatoryEncoder
 # from main_files.preprocessing.art_avdf.avdf.audio_preprocessor_avdf import AudioPreprocessorAVDF

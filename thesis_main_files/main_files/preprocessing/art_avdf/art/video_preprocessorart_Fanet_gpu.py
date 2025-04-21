@@ -1,7 +1,3 @@
-# ============================
-# Parallel Video Preprocessing (GPU-accelerated)
-# ============================
-
 import os
 import cv2
 import numpy as np
@@ -9,11 +5,7 @@ import face_alignment
 import torch
 import gc
 import psutil
-import pandas as pd
 from pathlib import Path
-from joblib import Parallel, delayed  # NEW: added for parallel processing
-from multiprocessing import cpu_count  # NEW: used to determine number of parallel jobs
-
 
 def get_memory_usage():
     process = psutil.Process(os.getpid())
@@ -25,8 +17,11 @@ class VideoPreprocessor_FANET:
         self.batch_size = batch_size
         self.output_base_dir_real = output_base_dir_real
         self.real_output_txt_path = real_output_txt_path
+
+        # 🔧 MODIFIED: Explicit device setup for single GPU
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+        # 🔧 MODIFIED: GPU-based face alignment initialized once
         self.fa = face_alignment.FaceAlignment(
             face_alignment.LandmarksType.TWO_D,
             device=self.device,
@@ -49,39 +44,37 @@ class VideoPreprocessor_FANET:
             lip_video_size = (224, 224)
             fourcc = cv2.VideoWriter_fourcc(*'H264')
 
-            try:
-                out = cv2.VideoWriter(output_video_path, fourcc, fps, lip_video_size)
-                if not out.isOpened():
-                    print(f"Error creating output video: {output_video_path}")
-                    return None
+            out = cv2.VideoWriter(output_video_path, fourcc, fps, lip_video_size)
+            if not out.isOpened():
+                print(f"Error creating output video: {output_video_path}")
+                return None
 
-                processed_frames = 0
-                print(f"Processing {video_path} | Initial memory: {get_memory_usage():.2f} MB")
+            processed_frames = 0
+            print(f"Processing {video_path} | Initial memory: {get_memory_usage():.2f} MB")
 
-                while True:
-                    ret, frame = cap.read()
-                    if not ret:
-                        break
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
 
-                    frame_mem = get_memory_usage()
-                    result = self.process_frame(frame, out)
-                    if result:
-                        processed_frames += 1
+                frame_mem = get_memory_usage()
+                result = self.process_frame(frame, out)
+                if result:
+                    processed_frames += 1
 
-                    del frame
-                    if processed_frames % 10 == 0:
-                        gc.collect()
-                        if self.device == 'cuda':
-                            torch.cuda.empty_cache()
+                del frame
+                if processed_frames % 10 == 0:
+                    gc.collect()
+                    if self.device == 'cuda':
+                        torch.cuda.empty_cache()
 
-                    print(f"Frame {processed_frames} | Δ Memory: {get_memory_usage() - frame_mem:.2f} MB")
+                print(f"Frame {processed_frames} | Δ Memory: {get_memory_usage() - frame_mem:.2f} MB")
 
-                return output_video_path if processed_frames > 0 else None
+            cap.release()
+            out.release()
+            del cap, out
 
-            finally:
-                cap.release()
-                out.release()
-                del cap, out
+            return output_video_path if processed_frames > 0 else None
 
         except Exception as e:
             print(f"Error processing {video_path}: {str(e)}")
@@ -122,21 +115,16 @@ class VideoPreprocessor_FANET:
     def main(self, video_paths):
         processed_paths = []
 
-        def process_and_log(video_path):
+        # ❌ REMOVED: joblib.Parallel for multi-video processing
+        # 🔧 MODIFIED: Sequential single-GPU video processing
+        for video_path in video_paths:
             result = self.process_video(video_path)
-            return result
-
-        # Parallel processing of videos using joblib
-        num_jobs = min(cpu_count(), len(video_paths))  # NEW: determine optimal number of parallel jobs
-        results = Parallel(n_jobs=num_jobs)(delayed(process_and_log)(vp) for vp in video_paths)  # NEW: parallel processing
-
-        with open(self.real_output_txt_path, 'w') as f:
-            for result in results:
-                if result:
+            if result:
+                with open(self.real_output_txt_path, 'a') as f:
                     f.write(f"{os.path.basename(result)} 0\n")
-                    processed_paths.append(result)
+                processed_paths.append(result)
 
-        print(f"File {self.real_output_txt_path} has been overwritten with new values.")
+        print(f"Processed {len(processed_paths)} videos.")
         return processed_paths
 
     def main_single(self, real_video_single):
@@ -147,13 +135,14 @@ class VideoPreprocessor_FANET:
 
         result = self.process_video(real_video_single)
         if result:
-            with open(self.real_output_txt_path, 'a') as f:
+            with open(self.real_output_txt_path, 'w') as f:
                 f.write(f"{os.path.basename(result)} 0\n")
             processed_paths.append(result)
 
+        # 🔧 MODIFIED: Force GC and GPU memory cleanup per video
         gc.collect()
         if self.device == 'cuda':
             torch.cuda.empty_cache()
-        print(f"Post-cleanup memory: {get_memory_usage():.2f} MB")
 
+        print(f"Post-cleanup memory: {get_memory_usage():.2f} MB")
         return processed_paths

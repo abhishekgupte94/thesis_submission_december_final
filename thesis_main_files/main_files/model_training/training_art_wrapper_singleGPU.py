@@ -1,5 +1,5 @@
 import torch
-from thesis_main_files.models.art_avdf.training_pipeline.training_ART_GPU import TrainingPipeline
+from thesis_main_files.models.art_avdf.training_pipeline.training_ART_singleGPU_final_annotated import TrainingPipeline
 from thesis_main_files.models.data_loaders.data_loader_ART import (
     VideoAudioFeatureProcessor,
     VideoAudioDataset,
@@ -11,9 +11,9 @@ from thesis_main_files.main_files.evaluation.art.evaluator import EvaluatorClass
 
 
 class TrainingPipelineWrapper:
-    def __init__(self, config=None, rank=0, world_size=1):
+    def __init__(self, config=None):
         """
-        Initializes and prepares the training pipeline for DDP training.
+        Initializes and prepares the training pipeline for single-GPU training.
 
         Args:
             config (dict, optional): Configuration dictionary. Keys can include:
@@ -21,14 +21,9 @@ class TrainingPipelineWrapper:
                 - learning_rate (float)
                 - num_epochs (int)
                 - csv_name (str)
-            rank (int): Current GPU/process rank for DDP.
-            world_size (int): Total number of processes (GPUs).
         """
         if config is None:
             config = {}
-
-        self.rank = rank
-        self.world_size = world_size
 
         # Load paths from utilities
         (csv_path, audio_preprocess_dir, feature_dir_audio, project_dir_video_swin,
@@ -60,58 +55,49 @@ class TrainingPipelineWrapper:
         # Training params
         learning_rate = config.get("learning_rate", 1e-4)
         num_epochs = config.get("num_epochs", 10)
-        device = torch.device(f"cuda:{rank}")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Evaluator (optional for post-training)
         self.evaluator = EvaluatorClass()
 
-        # Initialize DDP training pipeline
+        # Initialize single-GPU training pipeline
         self.pipeline = TrainingPipeline(
             dataset=dataset,
             batch_size=batch_size,
             learning_rate=learning_rate,
             num_epochs=num_epochs,
             device=device,
-            feature_processor=processor,
-            rank=rank,
-            world_size=world_size
+            feature_processor=processor
         )
+        self.device = device
 
     def start_training(self):
-        print(f"[GPU {self.rank}] Starting training...")
+        print("Starting training on single GPU...")
         self.pipeline.train()
-        if self.rank == 0:
-            print("Training complete.")
+        print("✅ Training complete.")
 
     def save_state(self, model, optimizer, current_epoch, current_loss, save_path="checkpoint_trainer.pt"):
         """
         Save the model and optimizer state (for checkpointing).
-        Only rank 0 saves to avoid duplicate writes.
         """
-        if self.rank == 0:
-            torch.save({
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'epoch': current_epoch,
-                'loss': current_loss
-            }, save_path)
-            print(f"✅ Training checkpoint saved to: {save_path}")
+        torch.save({
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'epoch': current_epoch,
+            'loss': current_loss
+        }, save_path)
+        print(f"✅ Training checkpoint saved to: {save_path}")
 
     def start_evaluation(self, model, audio_inputs, video_inputs):
         """
-        Runs evaluation only on rank 0.
+        Run evaluation using the evaluator.
         """
-        if self.rank == 0:
-            self.evaluator.evaluate(model, audio_inputs, video_inputs)
-            print("✅ Evaluation complete.")
+        self.evaluator.evaluate(model, audio_inputs, video_inputs)
+        print("✅ Evaluation complete.")
 
     def save_final_model(self, model, save_path="final_trained_model.pt"):
         """
         Save the final trained model (for deployment or inference).
-        Unwraps model.module if wrapped in DDP.
-        Only rank 0 saves.
         """
-        if self.rank == 0:
-            model_to_save = model.module if hasattr(model, "module") else model
-            torch.save(model_to_save, save_path)
-            print(f"✅ Final trained model saved to: {save_path}")
+        torch.save(model, save_path)
+        print(f"✅ Final trained model saved to: {save_path}")
