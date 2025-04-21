@@ -1,4 +1,8 @@
 import os
+import sys
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
 import numpy as np
 import torch
 import torchaudio
@@ -7,7 +11,7 @@ import gc
 import librosa
 from scipy.signal import medfilt
 from tensorflow.keras.models import load_model
-from model import melody_ResNet_joint_add
+from melodyExtraction_JDC.model import melody_ResNet_joint_add
 from pathlib import Path
 
 os.environ['KERAS_BACKEND'] = "tensorflow"
