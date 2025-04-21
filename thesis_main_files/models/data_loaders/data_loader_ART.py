@@ -2,8 +2,8 @@ from torch.utils.data import Dataset
 
 # Import your original modules for processing/extraction.
 from thesis_main_files.main_files.preprocessing.art_avdf.art.video_preprocessorart_Fanet import VideoPreprocessor_FANET
-from main_files.feature_extraction.art_avdf.art.feature_extractor_ART_Video import SWIN_EXECUTOR as VideoFeatureExtractor
-from main_files.preprocessing.art_avdf.art.audio_preprocessorart import AudioPreprocessor
+from thesis_main_files.main_files.feature_extraction.art_avdf.art.feature_extractor_ART_Video import SWIN_EXECUTOR as VideoFeatureExtractor
+from thesis_main_files.main_files.preprocessing.art_avdf.art.audio_preprocessorart import AudioPreprocessor
 from pathlib import Path
 import pandas as pd
 
