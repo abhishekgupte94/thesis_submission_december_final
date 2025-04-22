@@ -9,10 +9,7 @@ import psutil
 import torch.nn.functional as F
 # from models.art_avdf.training_pipeline.training_ART import audio_paths
 import subprocess
-import torchaudio
-import torch
-import io
-import ffmpeg
+import gc
 os.environ['KERAS_BACKEND'] = "tensorflow"
 
 from melodyExtraction_JDC.custom.jdc_implementation_for_art_avdf import JDCModel
@@ -23,7 +20,7 @@ class AudioPreprocessor:
         self.project_dir = self.get_project_root()
         self.sample_rate = sample_rate
         self.mel_transform = torchaudio.transforms.MelSpectrogram(
-            sample_rate=sample_rate, n_fft=1024, hop_length=20, n_mels=640, window_fn=torch.hann_window
+            sample_rate=sample_rate, n_fft=400, hop_length=20, n_mels=640, window_fn=torch.hann_window
         )
         self.batch_size = batch_size
         self.jdc_model = JDCModel()
@@ -32,66 +29,6 @@ class AudioPreprocessor:
         process = psutil.Process(os.getpid())
         memory_info = process.memory_info()
         return memory_info.rss / 1024 / 1024
-
-    def process_audio_from_waveform(self, waveform, sample_rate = 16000):
-        """
-        Converts waveform to log-mel spectrogram using class-defined mel_transform.
-        Handles resampling and mono conversion.
-        """
-        print("processing waveform reached")
-        with torch.no_grad():
-            # Resample if needed
-            # if sample_rate != self.sample_rate:
-            #     waveform = torchaudio.functional.resample(waveform, sample_rate, self.sample_rate)
-
-            # Convert to mono if needed
-            if waveform.size(0) > 1:
-                waveform = torch.mean(waveform, dim=0, keepdim=True)
-
-            # Apply mel transformation
-            mel_spec = self.mel_transform(waveform)
-
-            # Use log scale with numerical stability
-            log_mel_spec = torch.log(mel_spec + 1e-9)
-
-        return log_mel_spec
-
-    def process_waveforms(self, video_paths, batch_size=32):
-        all_log_mel_specs = []
-        all_melody_features = []
-
-        for i in range(0, len(video_paths), batch_size):
-            print(f"Memory usage before processing batch {i // batch_size + 1}: {self.get_memory_usage():.2f} MB")
-            batch_video_paths = video_paths[i:i + batch_size]
-
-            waveforms_and_sr = [self.extract_audio_tensor_from_video(v_path) for v_path in batch_video_paths]
-
-            for waveform, sr in waveforms_and_sr:
-                log_mel_spec = self.process_audio_from_waveform(waveform, sr)
-                all_log_mel_specs.append(log_mel_spec)
-
-            waveforms = [wf for wf, _ in waveforms_and_sr]
-            melody_features = self.get_melody_batch_from_waveforms(waveforms)
-            all_melody_features.extend(melody_features)
-
-            print(f"Memory usage after processing batch {i // batch_size + 1}: {self.get_memory_usage():.2f} MB")
-
-        return all_log_mel_specs, all_melody_features
-
-    def main_processing_waveforms(self, video_paths, batch_size=32, save_path=None):
-        log_mel_list, melody_list = self.process_waveforms(video_paths, batch_size=batch_size)
-        concatenated_features = self.concatenate_features(log_mel_list, melody_list)
-
-        if save_path:
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
-            torch.save(concatenated_features, save_path)
-        else:
-            return concatenated_features
-        return 0
-
-    def get_melody_batch_from_waveforms(self, waveforms):
-        return self.jdc_model.batch_melody_waveform(waveforms,
-                                                      batch_size=self.batch_size)
 
     def get_project_root(self,project_name=None):
         current = Path(__file__).resolve()
@@ -120,6 +57,36 @@ class AudioPreprocessor:
 
         return None
 
+
+
+    # ...
+
+    def extract_audio_from_video(self, video_path, output_dir, sample_rate=16000):
+        os.makedirs(output_dir, exist_ok=True)
+        output_filename = Path(video_path).stem + ".wav"
+        output_path = os.path.join(output_dir, output_filename)
+
+        command = [
+            "ffmpeg", "-y", "-i", video_path,
+            "-vn",
+            "-acodec", "pcm_s16le",
+            "-ar", str(sample_rate),
+            "-ac", "1",
+            output_path
+        ]
+
+        try:
+            result = subprocess.run(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                check=True
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"FFmpeg failed for {video_path}:\n{e.stderr.decode()}") from e
+
+        return output_path
+
     def process_batch(self, audio_paths):
         for audio_path in audio_paths:
             full_audio_path = os.path.join(self.project_dir, "datasets", "processed", "lav_df", "audio_wav", "train", audio_path)
@@ -129,6 +96,36 @@ class AudioPreprocessor:
     def get_melody_batch(self, audio_paths):
         return self.jdc_model.batch_process_melody(audio_paths, output_dir=None, is_fake=False,
                                                    batch_size=self.batch_size)
+
+    def process_and_save(self, audio_paths, mel_output_dir, melody_output_dir, batch_size=32):
+        os.makedirs(mel_output_dir, exist_ok=True)
+        os.makedirs(melody_output_dir, exist_ok=True)
+
+        for i in range(0, len(audio_paths), batch_size):
+            print(f"Memory usage before processing batch {i // batch_size + 1}: {self.get_memory_usage():.2f} MB")
+            batch_audio_paths = audio_paths[i:i + batch_size]
+
+            for idx, log_mel_spec in enumerate(self.process_batch(batch_audio_paths)):
+                filename = Path(batch_audio_paths[idx]).stem
+                mel_path = os.path.join(mel_output_dir, f"{filename}.pt")
+                torch.save(log_mel_spec, mel_path)
+                print(f"✅ Saved mel spectrogram: {mel_path}")
+
+            full_audio_paths = [
+                os.path.join(self.project_dir, "datasets", "processed", "lav_df", "audio_wav", "train", audio_path) for audio_path in batch_audio_paths
+            ]
+            melody_features = self.get_melody_batch(full_audio_paths)
+            for idx, melody in enumerate(melody_features):
+                filename = Path(batch_audio_paths[idx]).stem
+                melody_path = os.path.join(melody_output_dir, f"{filename}.pt")
+                torch.save(melody, melody_path)
+                print(f"✅ Saved melody: {melody_path}")
+
+            print(f"Memory usage after processing batch {i // batch_size + 1}: {self.get_memory_usage():.2f} MB")
+
+    def get_melody_single(self, audio_path, batch_size=1):
+        return self.jdc_model.predict(audio_path, output_dir=None, is_fake=False,
+                                      batch_size=self.batch_size)
 
     def process_audio(self, audio_path):
         with torch.no_grad():
@@ -141,39 +138,17 @@ class AudioPreprocessor:
             log_mel_spec = torch.log(mel_spec + 1e-9)
         return log_mel_spec
 
-    def extract_audio_tensor_from_video(self,video_path, sample_rate=16000):
-        command = [
-            'ffmpeg',
-            '-i', video_path,
-            '-f', 'wav',  # output format
-            '-acodec', 'pcm_s16le',  # raw PCM audio
-            '-ar', str(sample_rate),  # resample to desired rate
-            '-ac', '1',  # mono
-            'pipe:1'  # output to stdout
-        ]
-        # Run ffmpeg and capture stdout
-        process = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if process.returncode != 0:
-            raise RuntimeError(f"ffmpeg error: {process.stderr.decode()}")
 
-        # Load the audio from the byte stream
-        audio_bytes = io.BytesIO(process.stdout)
-        waveform, sr = torchaudio.load(audio_bytes)
 
-        return waveform, sr  # <-- ✅ Return both
-
-    import torch
-    import torch.nn.functional as F
-
-    def pad_or_truncate(self,tensor, target_len, dim=2):
-        current_len = tensor.shape[dim]
+    def pad_or_truncate(self,batch_tensor, target_len, dim=2):
+        current_len = batch_tensor.shape[dim]
         if current_len > target_len:
-            return tensor.narrow(dim, 0, target_len)  # Truncate
+            return batch_tensor.narrow(dim, 0, target_len)  # Truncate
         elif current_len < target_len:
-            pad_size = [0] * (2 * tensor.dim())
+            pad_size = [0] * (2 * batch_tensor.dim())
             pad_size[-(2 * dim + 1)] = target_len - current_len  # Pad at end
-            return F.pad(tensor, pad_size)
-        return tensor
+            return F.pad(batch_tensor, pad_size)
+        return batch_tensor
 
     def concatenate_features(self, log_mel_list, melody_list):
         concatenated_list = []
@@ -225,16 +200,42 @@ class AudioPreprocessor:
 
         return all_log_mel_specs, all_melody_features
 
-    def main_processing(self, audio_paths, batch_size=32,save_path = None):
+    def main_processing(self, video_paths, audio_output_dir, batch_size=32, save_path=None):
+        audio_paths = []
+
+        # Step 1: Extract audio from each video
+        for video_path in video_paths:
+            try:
+                audio_path = self.extract_audio_from_video(video_path, audio_output_dir, self.sample_rate)
+                audio_paths.append(os.path.basename(audio_path))  # only the file name, used by downstream code
+                print(f"✅ Extracted: {audio_path}")
+            except Exception as e:
+                print(f"❌ Failed to extract audio from {video_path}: {e}")
+
+        if not audio_paths:
+            print("No audio files were processed.")
+            return None
+
+        # Step 2: Run mel + melody processing
         log_mel_list, melody_list = self.process(audio_paths, batch_size=batch_size)
-        # print(len(melody_list))
+
+        # Step 3: Combine features
         concatenated_features = self.concatenate_features(log_mel_list, melody_list)
-        # stacked_tensor = torch.stack(concatenated_features)
+
+        # Step 4: Save if needed
         if save_path:
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
             torch.save(concatenated_features, save_path)
+            print(f"📦 Saved concatenated features: {save_path}")
         else:
+            print("⚠️ No save_path provided, returning tensor.")
             return concatenated_features
+
+        # Step 5: Clean up memory
+        del log_mel_list, melody_list, concatenated_features
+        gc.collect()
+        torch.cuda.empty_cache()
+
         return 0
 
 

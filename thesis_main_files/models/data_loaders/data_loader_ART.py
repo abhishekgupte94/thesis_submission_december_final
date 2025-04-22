@@ -163,15 +163,16 @@ class VideoAudioFeatureExtractor:
     #         print(e)
     #         # print(f"Error extracting features for video {preprocessed}: {e}")
     #         return []
-    def extract_audio_features(self, audio_preprocessor,audio_paths,batch_size): #,num_rows):# mel_output_dir, melody_output_dir):
+    def extract_audio_features(self, audio_preprocessor,video_paths,batch_size): #,num_rows):# mel_output_dir, melody_output_dir):
         try:
             # if num_rows:
             #     audio_paths = audio_paths[:num_rows]
                 # filenames = filenames[:num_rows]
-            audio_features = audio_preprocessor.main_processing(audio_paths,batch_size,save_path = "/Users/abhishekgupte_macbookpro/PycharmProjects/thesis_main_files/test_files/test_2_audio_embeddings/test_2_audio_embeddings.pt")
+            # print("Reached audio stage")
+            audio_features = audio_preprocessor.main_processing_waveforms(video_paths,batch_size)
             return audio_features
         except Exception as e:
-            print(f"Error extracting audio feature for {audio_paths}: {e}")
+            print(f"Error extracting audio feature for {video_paths}: {e}")
             return []
     def extract_audio_feature_single(self, audio_preprocessor,audio_path, filenames, mel_output_dir, melody_output_dir):
         try:
@@ -220,7 +221,7 @@ class VideoAudioFeatureProcessor:
 
         try:
             processed_audio_features = self.feature_extractor.extract_audio_features(self.audio_preprocessor,
-                                                                                     audio_paths, self.batch_size)
+                                                                                     video_paths, self.batch_size)
         except Exception as e:
             print(f"Audio Processing Error: {e}")
             audio_error = True
@@ -324,6 +325,7 @@ class VideoAudioDataset(Dataset):
 #
 #     def test_audio_feature_extraction(self, audio_paths):
 #         try:
+#             # print("Audio stage 2 reached!")
 #             audio_features = self.feature_extractor.extract_audio_features(
 #                 self.audio_preprocessor, audio_paths, self.batch_size
 #             )
@@ -457,20 +459,22 @@ class VideoAudioDataset(Dataset):
 #     batch_size = 32
 #     avfet = AudioFeatureExtractorTester(batch_size)
 #     # vcet = VideoComponentExtractorTester(batch_size, video_preprocess_dir,real_output_txt_path)
-#     vfet = VideoFeatureExtractorTester(batch_size)
+#     # vfet = VideoFeatureExtractorTester(batch_size)
 #     # vfaet = VideoAudioFeatureExtractorTester(batch_size)
 #     dataloader = DataLoader(va, batch_size=32, shuffle= False, num_workers=4)
 #     num = 0
 #     for video_paths, audio_paths, labels in dataloader:
 #         print(video_paths,audio_paths)
-#         if num == 0:
-#             num+=1
-#             continue
+#         # if num == 0:
+#         #     num+=1
+#         #     continue
 #         # print(audio_paths)
 #         # print(video_paths)
 #         # vcet.test_video_component_extraction(video_paths)
 #         # vfet.test_video_feature_extraction()
-#         avfet.test_audio_feature_extraction(audio_paths)
+#         features = avfet.test_audio_feature_extraction(video_paths)
+#         print(features.size())
+#         print(features)
 #         # audio_features = avfet.test_audio_feature_extraction(audio_paths)
 #         # print(audio_features.size())
 #         # print(len(audio_features))

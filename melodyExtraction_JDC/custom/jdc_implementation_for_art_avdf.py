@@ -36,6 +36,57 @@ class JDCModel:
 
         self.x_train_mean, self.x_train_std = self.load_normalization_values()
 
+    def extract_spectrogram_from_waveform(self, waveform, sample_rate=16000):
+        """
+        Extracts spectrogram from in-memory waveform using librosa.
+        """
+        # Convert PyTorch tensor to numpy
+        if isinstance(waveform, torch.Tensor):
+            waveform = waveform.squeeze().cpu().numpy()
+
+        # Compute STFT
+        S = librosa.core.stft(waveform, n_fft=1024, hop_length=20, win_length=1024)
+        x_spec = np.abs(S)
+        x_spec = librosa.core.power_to_db(x_spec, ref=np.max).astype(np.float32)
+
+        # Padding for input size
+        num_frames = x_spec.shape[1]
+        padNum = num_frames % self.get_options().input_size
+        if padNum != 0:
+            len_pad = self.get_options().input_size - padNum
+            padding_feature = np.zeros(shape=(513, len_pad))
+            x_spec = np.concatenate((x_spec, padding_feature), axis=1)
+
+        # Frame slicing
+        x_test = np.array([x_spec[:, range(j, j + self.get_options().input_size)].T for j in
+                           range(0, num_frames, self.get_options().input_size)])
+        x_test = (x_test - self.x_train_mean) / (self.x_train_std + 1e-6)
+        x_test = x_test[:, :, :, np.newaxis]
+
+        return x_test
+
+    def predict_from_waveform(self, waveform, sample_rate=16000, batch_size=32):
+        """
+        Predict melody from in-memory waveform instead of file.
+        """
+        x_test = self.extract_spectrogram_from_waveform(waveform, sample_rate)
+        y_predict = self.model.predict(x_test, batch_size=batch_size, verbose=0)
+
+        # Process prediction
+        num_total = y_predict[0].shape[0] * y_predict[0].shape[1]
+        est_pitch = np.zeros(num_total)
+        y_predict = np.reshape(y_predict[0], (num_total, y_predict[0].shape[2]))
+
+        for i in range(y_predict.shape[0]):
+            index_predict = np.argmax(y_predict[i, :])
+            pitch_MIDI = self.pitch_range[int(index_predict)]
+            if 38 <= pitch_MIDI <= 83:
+                est_pitch[i] = 2 ** ((pitch_MIDI - 69) / 12.) * 440
+
+        est_pitch = medfilt(est_pitch, 5)
+
+        return torch.from_numpy(est_pitch).float().unsqueeze(0)
+
     def load_jdc_model(self):
         options = self.get_options()
         print(self.project_dir)
@@ -127,7 +178,27 @@ class JDCModel:
         # If 'thesis_main_files' is not found, classify as attached project
         return current.parents[1]  # Equivalent to .parents[2] in the script
 
+    def batch_melody_waveform(self, waveform_list, batch_size=32):
+        """
+        Process a list of in-memory waveforms and return melody predictions.
 
+        Args:
+            waveform_list (List[Tensor]): List of 1D or 2D torch tensors representing audio waveforms.
+            batch_size (int): Batch size for inference.
+
+        Returns:
+            List[Tensor]: Predicted melody tensors.
+        """
+        batch_predictions = []
+        for waveform in waveform_list:
+            try:
+                # Predict melody directly from waveform
+                melody = self.predict_from_waveform(waveform, sample_rate=16000, batch_size=batch_size)
+                batch_predictions.append(melody)
+            except Exception as e:
+                print(f"❌ Error processing waveform: {e}")
+                batch_predictions.append(None)  # Or use torch.zeros_like if shape is critical
+        return batch_predictions
 
 # print("JDC Model loaded successfully and ready for use.")
 
