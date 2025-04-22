@@ -71,22 +71,12 @@ class TrainingPipelineWrapper:
         )
         self.device = device
 
-    def start_training(self):
+    def start_training(self,checkpoint_dir):
         print("Starting training on single GPU...")
-        self.pipeline.train()
+        self.pipeline.train(checkpoint_dir)
         print("✅ Training complete.")
 
-    def save_state(self, model, optimizer, current_epoch, current_loss, save_path="checkpoint_trainer.pt"):
-        """
-        Save the model and optimizer state (for checkpointing).
-        """
-        torch.save({
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'epoch': current_epoch,
-            'loss': current_loss
-        }, save_path)
-        print(f"✅ Training checkpoint saved to: {save_path}")
+
 
     def start_evaluation(self, model, audio_inputs, video_inputs):
         """

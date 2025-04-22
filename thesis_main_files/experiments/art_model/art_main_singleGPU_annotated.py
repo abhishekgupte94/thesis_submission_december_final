@@ -22,12 +22,12 @@ def main():
         "learning_rate": 1e-4,
         "num_epochs": 30,
     }
-
+    checkpoint_dir = "/content/drive/MyDrive/checkpoints"
     # -------------------- INIT PIPELINE --------------------
     wrapper = TrainingPipelineWrapper(config=config)
 
     # -------------------- TRAIN --------------------
-    wrapper.start_training()
+    wrapper.start_training(checkpoint_dir)
 
     # -------------------- SAVE FINAL MODEL --------------------
     print("🧠 Saving final trained model...")

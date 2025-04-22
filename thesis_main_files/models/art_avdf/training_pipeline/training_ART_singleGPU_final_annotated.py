@@ -25,10 +25,10 @@ class TrainingPipeline:
         log_dir = f"runs/ssl_single_gpu_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         self.writer = SummaryWriter(log_dir=log_dir)
 
-    def train(self):
+    def train(self,checkpoint_dir):
         self.model.train()
         global_step = 0
-
+        avg_loss = 0
         for epoch in range(self.num_epochs):
             running_loss = 0.0
 
@@ -60,6 +60,26 @@ class TrainingPipeline:
 
             avg_loss = running_loss / len(self.dataloader)
             print(f"Epoch [{epoch + 1}/{self.num_epochs}], Loss: {avg_loss:.4f}")
-
+        # ✅ Save checkpoint every 10 epochs
+        if (epoch + 1) % 10 == 0:
+            save_path = os.path.join(checkpoint_dir, f"art_checkpoint_epoch_{epoch + 1}.pt")
+            self.save_state(
+                model=self.model,
+                optimizer=self.optimizer,
+                current_epoch=epoch + 1,
+                current_loss=avg_loss,
+                save_path=save_path
+            )
         self.writer.close()
         print("Training completed.")
+    def save_state(self, model, optimizer, current_epoch, current_loss, save_path="checkpoint_trainer.pt"):
+        """
+        Save the model and optimizer state (for checkpointing).
+        """
+        torch.save({
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'epoch': current_epoch,
+            'loss': current_loss
+        }, save_path)
+        print(f"✅ Training checkpoint saved to: {save_path}")
