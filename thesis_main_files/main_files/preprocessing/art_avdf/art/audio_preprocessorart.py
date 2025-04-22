@@ -23,8 +23,14 @@ class AudioPreprocessor:
         self.project_dir = self.get_project_root()
         self.sample_rate = sample_rate
         self.mel_transform = torchaudio.transforms.MelSpectrogram(
-            sample_rate=sample_rate, n_fft=1024, hop_length=20, n_mels=640, window_fn=torch.hann_window
+            sample_rate=16000,
+            n_fft=1024,  # FFT window size (can be 1024 if you want more frequency resolution)
+            hop_length=640,  # Shift by 40ms → 1 frame per 40ms
+            win_length=640,  # Match window size to hop length (40ms)
+            n_mels=64,
+            window_fn=torch.hann_window
         )
+
         self.batch_size = batch_size
         self.jdc_model = JDCModel()
 
@@ -38,7 +44,7 @@ class AudioPreprocessor:
         Converts waveform to log-mel spectrogram using class-defined mel_transform.
         Handles resampling and mono conversion.
         """
-        print("processing waveform reached")
+        # print("processing waveform reached")
         with torch.no_grad():
             # Resample if needed
             # if sample_rate != self.sample_rate:
@@ -68,11 +74,15 @@ class AudioPreprocessor:
 
             for waveform, sr in waveforms_and_sr:
                 log_mel_spec = self.process_audio_from_waveform(waveform, sr)
+                print(log_mel_spec.size())
                 all_log_mel_specs.append(log_mel_spec)
 
             waveforms = [wf for wf, _ in waveforms_and_sr]
             melody_features = self.get_melody_batch_from_waveforms(waveforms)
+            # print(melody_features)
             all_melody_features.extend(melody_features)
+            # print("log_mel shape:", all_log_mel_specs.shape)  # Should be [1, 64, T]
+            # print("melody shape:", all_melody_features.shape)  # Maybe it's [65, T]
 
             print(f"Memory usage after processing batch {i // batch_size + 1}: {self.get_memory_usage():.2f} MB")
 
@@ -80,7 +90,7 @@ class AudioPreprocessor:
 
     def main_processing_waveforms(self, video_paths, batch_size=32, save_path=None):
         log_mel_list, melody_list = self.process_waveforms(video_paths, batch_size=batch_size)
-        concatenated_features = self.concatenate_features(log_mel_list, melody_list)
+        concatenated_features = self.align_log_mel_by_melody(log_mel_list, melody_list)
 
         if save_path:
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -168,40 +178,34 @@ class AudioPreprocessor:
     def pad_or_truncate(self,tensor, target_len, dim=2):
         current_len = tensor.shape[dim]
         if current_len > target_len:
-            return tensor.narrow(dim, 0, target_len)  # Truncate
+            return tensor.narrow(dim, 0, target_len)
         elif current_len < target_len:
             pad_size = [0] * (2 * tensor.dim())
             pad_size[-(2 * dim + 1)] = target_len - current_len  # Pad at end
             return F.pad(tensor, pad_size)
         return tensor
 
-    def concatenate_features(self, log_mel_list, melody_list):
-        concatenated_list = []
-
+    def align_log_mel_by_melody(self,log_mel_list, melody_list):
         if len(log_mel_list) != len(melody_list):
-            raise ValueError("The number of log_mel tensors and melody tensors must match.")
+            raise ValueError("log_mel_list and melody_list must have the same length.")
 
-        # Step 1: Find the max length across all tensors
-        all_lengths = [log_mel.shape[2] for log_mel in log_mel_list] + \
-                      [melody.shape[1] for melody in melody_list]
-        max_T = max(all_lengths)
-
-        # Step 2: Pad/Truncate and Concatenate
+        # STEP 1: Get the global max T
+        max_T = 0
         for log_mel, melody in zip(log_mel_list, melody_list):
-            if log_mel.ndim != 3 or melody.ndim != 2:
-                raise ValueError(f"Unexpected tensor dimensions: log_mel={log_mel.shape}, melody={melody.shape}")
+            if log_mel.ndim != 3 or log_mel.shape[0] != 1 or log_mel.shape[1] != 64:
+                raise ValueError(f"Expected log_mel shape [1, 64, T], got {log_mel.shape}")
 
-            log_mel = self.pad_or_truncate(log_mel, max_T, dim=2)  # shape: (1, 64, max_T)
-            melody = self.pad_or_truncate(melody, max_T, dim=1)  # shape: (64, max_T)
+            log_mel_T = log_mel.shape[2]
+            melody_T = melody.shape[0] if melody.ndim == 1 else melody.shape[1]
+            max_T = max(max_T, log_mel_T, melody_T)
 
-            repeated_melody = melody.unsqueeze(0).repeat(log_mel.shape[0], 1, 1)  # shape: (1, 64, max_T)
-            concatenated = torch.cat((log_mel, repeated_melody), dim=1)  # shape: (1, 128, max_T)
+        # STEP 2: Pad all log_mel tensors to max_T
+        aligned_list = []
+        for log_mel in log_mel_list:
+            padded = self.pad_or_truncate(log_mel, max_T, dim=2)  # [1, 64, max_T]
+            aligned_list.append(padded.unsqueeze(0))  # [1, 1, 64, max_T]
 
-            concatenated_list.append(concatenated)
-
-        # Step 3: Stack into batch
-        batch_tensor = torch.stack(concatenated_list)  # shape: (B, 128, max_T)
-        return batch_tensor
+        return torch.cat(aligned_list, dim=0)  # Final shape: [B, 1, 64, max_T]
 
     def process(self, audio_paths, batch_size=32):
         all_log_mel_specs = []
@@ -228,7 +232,7 @@ class AudioPreprocessor:
     def main_processing(self, audio_paths, batch_size=32,save_path = None):
         log_mel_list, melody_list = self.process(audio_paths, batch_size=batch_size)
         # print(len(melody_list))
-        concatenated_features = self.concatenate_features(log_mel_list, melody_list)
+        concatenated_features = self.align_log_mel_by_melody(log_mel_list, melody_list)
         # stacked_tensor = torch.stack(concatenated_features)
         if save_path:
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -264,7 +268,7 @@ class AudioPreprocessor:
 #                 return parent
 #
 #     return None
-
+#
 # def convert_paths():
 #     project_dir_curr = get_project_root()
 #     csv_path = str(
@@ -309,14 +313,14 @@ class AudioPreprocessor:
 #     video_paths = [str(Path(video_dir) / filename) for filename in df['video_file']]
 #     audio_paths = [str(Path(audio_dir) / filename) for filename in df['audio_file']]
 #     labels = df['label'].tolist()
+
+    # return audio_paths, video_paths, labels
+
+
+
 #
-#     return audio_paths, video_paths, labels
-#
-#
-#
-#
-# # # # print(audio_paths)
-# csv_path, audio_preprocess_dir, feature_dir_audio, project_dir_video_swin, video_preprocess_dir, feature_dir_vid, audio_dir,video_dir,real_output_txt_path = convert_paths()
+# # # # # print(audio_paths)
+# csv_path, audio_preprocess_dir, feature_dir_audio, project_dir_video_swin, video_preprocess_dir =convert_paths()
 # audio_paths, video_paths, labels = create_dataset_idx(csv_path,start_idx = 32, num_rows = 32, video_dir = video_dir, audio_dir = audio_dir)
 # ap = AudioPreprocessor()
 # concatenated = ap.main_processing(audio_paths,batch_size = 32,save_path = "/Users/abhishekgupte_macbookpro/PycharmProjects/thesis_main_files/test_files/test_2_audio_embeddings/test_2_audio_embeddings.pt")

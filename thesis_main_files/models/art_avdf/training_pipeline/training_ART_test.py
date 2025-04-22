@@ -14,7 +14,7 @@ from thesis_main_files.models.art_avdf.art_main_module.art_model import ARTModul
 
 # Step 3: Initialize the Processor with needed dirs and batch_size
 batch_size = 32
-
+import os
 import torch
 from thesis_main_files.models.art_avdf.art_main_module.art_model import ARTModule
 from thesis_main_files.main_files.evaluation.art.evaluator import EvaluatorClass
@@ -46,13 +46,15 @@ class TestTrainingPipelineWrapper:
         self.num_epochs = config.get("num_epochs", 5)
 
         self.loss_fn = SelfSupervisedLearning().to(self.device)
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
+        self.optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate)
         self.evaluator = EvaluatorClass(rank=0)
-
+        self.checkpoint_dir = "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/main_files/model_training"
     def start_training(self):
         print("🔁 Starting batch-based training...")
         self.model.train()
+        global_step = 0
         for epoch in range(self.num_epochs):
+            running_loss = 0.0
             epoch_loss = 0.0
             for i, (audio, video) in enumerate(zip(self.audio_batches, self.video_batches)):
                 self.optimizer.zero_grad()
@@ -64,9 +66,28 @@ class TestTrainingPipelineWrapper:
                 self.optimizer.step()
                 epoch_loss += loss.item()
 
-                print(f"  [Epoch {epoch+1}/{self.num_epochs}] Batch {i+1} Loss: {loss.item():.4f}")
+                # avg_loss = running_loss / len(self.dataloader)
+                # print(f"Epoch [{i + 1}], Loss: {avg_loss:.4f}")
+                # ✅ Save checkpoint every 10 epochs
+
+                save_path = os.path.join(self.checkpoint_dir, f"art_checkpoint_epoch_{i + 1}.pt")
+                self.save_state(
+                    # model=self.model,
+                    # optimizer=self.optimizer,
+                    current_epoch=epoch + 1,
+                    current_loss=epoch_loss,
+                    # save_path=save_path
+                )
+            # self.save_final_model(self.model)
+            # self.start_evaluation(self.model,f_art,f_lip)
+            # self.writer.close()
+
+            # self.save_final_model(self.model)
+            # self.start_evaluation(self.model,f_art,f_lip)
+            # self.writer.close()
 
             print(f"✅ Epoch {epoch+1} Avg Loss: {epoch_loss / len(self.audio_batches):.4f}")
+
 
     def start_evaluation(self):
         print("📊 Running batch-wise evaluation...")
@@ -80,11 +101,12 @@ class TestTrainingPipelineWrapper:
                     video_inputs=video
                 )
 
-    def save_state(self, current_epoch=0, current_loss=0.0):
+    def save_state(self,save_path = None, current_epoch=0, current_loss=0.0):
         print("💾 Saving model checkpoint...")
         torch.save({
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'epoch': current_epoch,
             'loss': current_loss
-        }, 'checkpoint_test_trainer.pt')
+        }, save_path)
+

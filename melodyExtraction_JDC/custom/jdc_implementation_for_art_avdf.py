@@ -194,6 +194,7 @@ class JDCModel:
             try:
                 # Predict melody directly from waveform
                 melody = self.predict_from_waveform(waveform, sample_rate=16000, batch_size=batch_size)
+                # print(melody.size())
                 batch_predictions.append(melody)
             except Exception as e:
                 print(f"❌ Error processing waveform: {e}")

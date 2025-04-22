@@ -54,6 +54,6 @@ class SelfSupervisedLearning(nn.Module):
         # f_art_prime = f_art  # Modify if further refinement is needed
 
         # Return loss, and the transformed features
-        return loss
+        return loss,similarity_matrix
 
 

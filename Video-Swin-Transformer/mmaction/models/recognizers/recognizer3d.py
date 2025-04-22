@@ -62,6 +62,7 @@ class Recognizer3D(BaseRecognizer):
             feat = self.extract_feat(imgs)
             if self.with_neck:
                 feat, _ = self.neck(feat)
+            return feat
         self.s = self.test_cfg.get('feature_extraction', False) if self.test_cfg else False
         if self.s:
             # perform spatio-temporal pooling

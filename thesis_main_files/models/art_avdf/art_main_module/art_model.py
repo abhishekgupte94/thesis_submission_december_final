@@ -8,8 +8,8 @@ from thesis_main_files.models.art_avdf.encoders.video_articulatory_encoder impor
 # from main_files.preprocessing.art_avdf.avdf.video_preprocessor_avdf import VideoPreprocessorAVDF
 from thesis_main_files.models.art_avdf.learning_containers.self_supervised_learning import  SelfSupervisedLearning
 # from main_files
-audio_path = "/datasets/processed/lav_df/audio_wav/train/000471.wav"
-video_path = "/Users/abhishekgupte_macbookpro/Downloads/Datasets/LAV-DF/train_filenames/000471.mp4"
+# audio_path = "/datasets/processed/lav_df/audio_wav/train/000471.wav"
+# video_path = "/Users/abhishekgupte_macbookpro/Downloads/Datasets/LAV-DF/train_filenames/000471.mp4"
 
 class ARTModule(nn.Module):
     def __init__(self):

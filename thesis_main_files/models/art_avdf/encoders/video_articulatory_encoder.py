@@ -8,7 +8,7 @@ from thesis_main_files.misc_tests.test_tensor_size import display_tensor
 
 
 class VideoArticulatoryEncoder(nn.Module):
-    def __init__(self,input_dim = 1024, hidden_dim=128):
+    def __init__(self,input_dim = 1024, hidden_dim=256):
         super().__init__()
         # Adaptive pooling to handle variable input length
         self.g_transform = nn.Sequential(

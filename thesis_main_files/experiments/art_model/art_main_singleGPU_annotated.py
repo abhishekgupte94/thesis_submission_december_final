@@ -20,9 +20,12 @@ def main():
         "csv_name": "training_data_two.csv",
         "batch_size": 128,
         "learning_rate": 1e-4,
-        "num_epochs": 30,
+        "num_epochs": 250,
+        "device" : torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     }
     checkpoint_dir = "/content/drive/MyDrive/checkpoints"
+    save_path_model = "/content/drive/MyDrive/checkpoints/artmodel_final.pt"
     # -------------------- INIT PIPELINE --------------------
     wrapper = TrainingPipelineWrapper(config=config)
 
@@ -33,7 +36,7 @@ def main():
     print("🧠 Saving final trained model...")
     model = wrapper.pipeline.model
     os.makedirs("checkpoints", exist_ok=True)
-    wrapper.save_final_model(model=model, save_path="checkpoints/artmodel_final.pt")
+    wrapper.save_final_model(model=model, save_path=save_path_model)
 
 
 if __name__ == "__main__":

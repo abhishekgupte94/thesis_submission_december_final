@@ -1,7 +1,7 @@
 from thesis_main_files.models.data_loaders.data_loader_ART import VideoAudioFeatureProcessor,VideoAudioDataset
 from thesis_main_files.models.art_avdf.learning_containers.self_supervised_learning import SelfSupervisedLearning
 from thesis_main_files.models.data_loaders.data_loader_ART import VideoAudioFeatureProcessor,VideoAudioDataset,create_file_paths,get_project_root,convert_paths, get_model_save_paths
-from thesis_main_files.main_files.model_training.train_art_wrapper import TrainingPipelineWrapper
+from thesis_main_files.main_files.model_training.training_art_wrapper_singleGPU import TrainingPipelineWrapper
 from thesis_main_files.models.art_avdf.art_main_module.art_model import ARTModule
 from thesis_main_files.config import CONFIG
 from torch.utils.tensorboard import SummaryWriter

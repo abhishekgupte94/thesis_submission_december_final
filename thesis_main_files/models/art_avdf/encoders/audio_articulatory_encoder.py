@@ -128,41 +128,42 @@ import torch.nn as nn
 features_path = "/Users/abhishekgupte_macbookpro/PycharmProjects/thesis_main_files/datasets/processed/lav_df/audio_wav/concatenated"
 
 
-class AudioArticulatoryEncoder(nn.Module):
-    def __init__(self, hidden_dim=128):
-        super().__init__()
-        # Adaptive pooling to handle variable input length
-        self.adaptive_pool = nn.AdaptiveAvgPool2d((1, hidden_dim))  # Changed to 2D pooling
-
-        self.layer_norm = nn.LayerNorm(hidden_dim)
-
-        self.adain = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim * 2),
-            nn.LayerNorm(hidden_dim * 2),
-            nn.ReLU(),
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.LayerNorm(hidden_dim)
-        )
-
-        self.dropout = nn.Dropout(0.2)
-
-    def forward(self, features):
-        # Handle 4D input by collapsing first two dimensions
-        B = features.size(0)
-        features = features.view(B, -1, features.size(-1))  # [B, C*H, W]
-
-        # Apply 2D adaptive pooling
-        x = self.adaptive_pool(features.unsqueeze(1))  # [B, 1, 1, hidden_dim]
-        x = x.squeeze(1).squeeze(1)  # [B, hidden_dim]
-
-        # Apply normalization and processing
-        x = self.layer_norm(x)
-        x = self.dropout(x)
-        x = self.adain(x)
-
-        return x
-
+# class AudioArticulatoryEncoder(nn.Module):
+#     def __init__(self, hidden_dim=128):
+#         super().__init__()
+#         # Adaptive pooling to handle variable input length
+#         self.adaptive_pool = nn.AdaptiveAvgPool2d((1, hidden_dim))  # Changed to 2D pooling
 #
+#         self.layer_norm = nn.LayerNorm(hidden_dim)
+#
+#         self.adain = nn.Sequential(
+#             nn.Linear(hidden_dim, hidden_dim * 2),
+#             nn.LayerNorm(hidden_dim * 2),
+#             nn.ReLU(),
+#             nn.Linear(hidden_dim * 2, hidden_dim),
+#             nn.LayerNorm(hidden_dim)
+#         )
+#
+#         self.dropout = nn.Dropout(0.2)
+#
+#     def forward(self, features):
+#         # Handle 4D input by collapsing first two dimensions
+#         B = features.size(0)
+#         features = features.view(B, -1, features.size(-1))  # [B, C*H, W]
+#
+#         # Apply 2D adaptive pooling
+#         x = self.adaptive_pool(features.unsqueeze(1))  # [B, 1, 1, hidden_dim]
+#         x = x.squeeze(1).squeeze(1)  # [B, hidden_dim]
+#
+#         # Apply normalization and processing
+#         x = self.layer_norm(x)
+#         x = self.dropout(x)
+#         x = self.adain(x)
+#
+#         return x
+# audio_encoder = AudioArticulatoryEncoder()
+# audio_encoder()
+# #
 # audio_paths = "/Users/abhishekgupte_macbookpro/PycharmProjects/thesis_main_files/test_files/test_1_audio_embeddings/test_1_audio_embeddings.pt"
 # audio_batch = torch.load(audio_paths)
 # audio_encoder = AudioArticulatoryEncoder()
@@ -171,3 +172,74 @@ class AudioArticulatoryEncoder(nn.Module):
 
 # torch.save(x,"/Users/abhishekgupte_macbookpro/PycharmProjects/thesis_main_files/test_files/test_1_audio_embeddings/save_embeddings.pt")
 
+
+import torch
+import torch.nn as nn
+
+class AudioArticulatoryEncoder(nn.Module):
+    def __init__(self, input_dim=64, lstm_hidden_dim=64, output_dim=256, dropout_prob=0.2):
+        super(AudioArticulatoryEncoder, self).__init__()
+
+        self.bi_lstm = nn.LSTM(
+            input_size=input_dim,
+            hidden_size=lstm_hidden_dim,
+            num_layers=1,
+            batch_first=True,
+            bidirectional=True
+        )
+
+        lstm_output_dim = 2 * lstm_hidden_dim  # Bi-LSTM has forward + backward
+
+        self.adain = nn.Sequential(
+            nn.Linear(lstm_output_dim, lstm_output_dim * 2),
+            nn.ReLU(),
+            nn.Linear(lstm_output_dim * 2, lstm_output_dim)
+        )
+
+        self.layer_norm = nn.LayerNorm(lstm_output_dim)
+        self.dropout = nn.Dropout(dropout_prob)
+
+        self.proj = nn.Linear(lstm_output_dim, output_dim)
+
+    def forward(self, x):
+        """
+        x: Tensor of shape [B, 64, T] — audio features (melody + prosody)
+        Returns:
+            out: [B, output_dim] — fixed-size audio embedding
+        """
+        # Auto-squeeze singleton channel
+        if x.dim() == 4 and x.shape[1] == 1:
+            x = x.squeeze(1)  # [B, C, T]
+        x = x.permute(0, 2, 1)  # [B, T, 64]
+
+        lstm_out, _ = self.bi_lstm(x)      # [B, T, 128]
+        pooled = lstm_out.mean(dim=1)      # [B, 128]
+        styled = self.adain(pooled)        # [B, 128]
+        normed = self.layer_norm(styled)   # [B, 128]
+        dropped = self.dropout(normed)     # [B, 128]
+        out = self.proj(dropped)           # [B, output_dim]
+
+        return out
+# import torch
+# import torch.nn as nn
+#
+# # Load two batched tensors
+# batch_1 = torch.load("/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/misc_files/save_path_1.pt")
+# batch_2 = torch.load("/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/misc_files/save_path_2.pt")
+#
+# # Sanity check shapes
+# print("Batch 1 shape:", batch_1.shape)  # Expect [B₁, 64, T]
+# print("Batch 2 shape:", batch_2.shape)  # Expect [B₂, 64, T]
+#
+# # Concatenate batches along batch dimension
+# # batched_input = torch.cat([batch_1, batch_2], dim=0)  # Shape: [B₁ + B₂, 64, T]
+#
+# # Initialize the audio encoder
+# ae = AudioEncoder()
+#
+# # Pass through encoder
+# output = ae(batch_2)  # Output: [B₁ + B₂, output_dim]
+#
+# # Print final output shape
+# print("Output shape:", output.shape)
+# print(output)
