@@ -61,7 +61,7 @@ class TrainingPipeline:
             avg_loss = running_loss / len(self.dataloader)
             print(f"Epoch [{epoch + 1}/{self.num_epochs}], Loss: {avg_loss:.4f}")
         # ✅ Save checkpoint every 10 epochs
-        if (epoch + 1) % 10 == 0:
+        if (epoch + 1) % 100 == 0:
             save_path = os.path.join(checkpoint_dir, f"art_checkpoint_epoch_{epoch + 1}.pt")
             self.save_state(
                 model=self.model,

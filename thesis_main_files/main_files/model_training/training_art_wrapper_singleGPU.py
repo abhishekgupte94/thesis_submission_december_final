@@ -54,7 +54,7 @@ class TrainingPipelineWrapper:
 
         # Training params
         learning_rate = config.get("learning_rate", 1e-4)
-        num_epochs = config.get("num_epochs", 2000)
+        num_epochs = config.get("num_epochs", 1000)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Evaluator (optional for post-training)
