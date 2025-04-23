@@ -20,7 +20,7 @@ from melodyExtraction_JDC.custom.jdc_implementation_for_art_avdf import JDCModel
 
 class AudioPreprocessor:
     def __init__(self, sample_rate=16000, batch_size=32):
-        self.project_dir = Path("/content/project_combined_repo_clean/thesis_main_files")#self.get_project_root()
+        self.project_dir = self.get_project_root()
         self.sample_rate = sample_rate
         self.mel_transform = torchaudio.transforms.MelSpectrogram(
             sample_rate=16000,
