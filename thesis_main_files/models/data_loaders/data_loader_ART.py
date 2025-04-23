@@ -527,7 +527,8 @@ def get_project_root(project_name=None):
     Returns:
         Path or None: Root directory if found, else None.
     """
-    current = Path(__file__).resolve()
+    import os
+    current = Path(os.getcwd()).resolve()
 
     # Look for the known parent folder
     for parent in current.parents:
@@ -736,3 +737,4 @@ class VideoAudioDataset(Dataset):
 # # features = vfa.execute_swin(return_output = True)
 # # print(features.size())
 # # print(features)
+prin
