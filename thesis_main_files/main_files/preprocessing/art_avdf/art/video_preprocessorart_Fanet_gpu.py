@@ -150,7 +150,7 @@ class VideoPreprocessor_FANET:
         return
 
 
-    def main_parallel(self, video_paths, max_workers=4):
+    def main_parallel(self, video_paths, max_workers=8):
         processed_paths = []
 
         print(f"🧵 Starting parallel video processing with {max_workers} workers...")
@@ -162,7 +162,7 @@ class VideoPreprocessor_FANET:
                 result = future.result()
                 if result:
                     processed_paths.append(result)
-
+        print(len(processed_paths))
         # ✅ Now write to the label file once all processing is done
         if self.real_output_txt_path and processed_paths:
             with open(self.real_output_txt_path, 'w') as f:
