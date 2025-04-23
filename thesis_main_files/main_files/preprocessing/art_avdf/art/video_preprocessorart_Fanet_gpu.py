@@ -1,4 +1,6 @@
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import cv2
 import numpy as np
 import face_alignment
@@ -6,6 +8,12 @@ import torch
 import gc
 import psutil
 from pathlib import Path
+
+# from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from tqdm import tqdm
+
 
 def get_memory_usage():
     process = psutil.Process(os.getpid())
@@ -139,6 +147,29 @@ class VideoPreprocessor_FANET:
                 processed_paths.append(result)
 
         print(f"Processed {len(processed_paths)} videos.")
+        return
+
+
+    def main_parallel(self, video_paths, max_workers=4):
+        processed_paths = []
+
+        print(f"🧵 Starting parallel video processing with {max_workers} workers...")
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(self.process_video, vp): vp for vp in video_paths}
+
+            for future in tqdm(as_completed(futures), total=len(video_paths), desc="📦 Processing videos"):
+                result = future.result()
+                if result:
+                    processed_paths.append(result)
+
+        # ✅ Now write to the label file once all processing is done
+        if self.real_output_txt_path and processed_paths:
+            with open(self.real_output_txt_path, 'w') as f:
+                for path in processed_paths:
+                    f.write(f"{os.path.basename(path)} 0\n")
+
+        print(f"✅ Processed {len(processed_paths)} videos.")
         return processed_paths
 
     def main_single(self, real_video_single):

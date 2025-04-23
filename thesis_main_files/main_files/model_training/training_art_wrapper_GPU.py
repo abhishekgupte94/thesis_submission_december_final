@@ -7,6 +7,7 @@ from thesis_main_files.models.data_loaders.data_loader_ART import (
     get_project_root,
     convert_paths
 )
+
 from thesis_main_files.main_files.evaluation.art.evaluator import EvaluatorClass
 
 
