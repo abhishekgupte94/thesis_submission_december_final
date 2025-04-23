@@ -42,11 +42,13 @@ class VideoPreprocessor_FANET:
 
             fps = int(cap.get(cv2.CAP_PROP_FPS))
             lip_video_size = (224, 224)
-            fourcc = cv2.VideoWriter_fourcc(*'H264')
+            # Save intermediate as .avi to avoid codec issues in Colab
+            avi_output_path = os.path.join(self.output_base_dir_real, f"{video_name}_lips_only.avi")
+            fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+            out = cv2.VideoWriter(avi_output_path, fourcc, fps, lip_video_size)
 
-            out = cv2.VideoWriter(output_video_path, fourcc, fps, lip_video_size)
             if not out.isOpened():
-                print(f"Error creating output video: {output_video_path}")
+                print(f"❌ Error creating AVI output: {avi_output_path}")
                 return None
 
             processed_frames = 0
@@ -72,7 +74,18 @@ class VideoPreprocessor_FANET:
 
             cap.release()
             out.release()
+            # Convert to .mp4 using ffmpeg if needed
+
+
             del cap, out
+            output_video_path = os.path.join(self.output_base_dir_real, f"{video_name}_lips_only.mp4")
+            conversion_cmd = f"ffmpeg -y -i \"{avi_output_path}\" -vcodec libx264 \"{output_video_path}\""
+
+            print(f"📦 Converting AVI to MP4...")
+            os.system(conversion_cmd)
+
+            # Optional: delete the .avi to save space
+            os.remove(avi_output_path)
 
             return output_video_path if processed_frames > 0 else None
 
