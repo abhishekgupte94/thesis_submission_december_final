@@ -150,7 +150,7 @@ class VideoPreprocessor_FANET:
         return
 
 
-    def main_parallel(self, video_paths, max_workers=8):
+    def main_parallel(self, video_paths, max_workers=2):
         processed_paths = []
 
         print(f"🧵 Starting parallel video processing with {max_workers} workers...")
