@@ -1,6 +1,6 @@
 import torch
 from thesis_main_files.models.art_avdf.training_pipeline.training_ART_singleGPU_final_annotated import TrainingPipeline
-from thesis_main_files.models.data_loaders.data_loader_ART_dfdc import (
+from thesis_main_files.models.data_loaders.data_loader_ARTg import (
     VideoAudioFeatureProcessor,
     VideoAudioDataset,
     create_file_paths,
