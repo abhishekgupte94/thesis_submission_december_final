@@ -168,13 +168,12 @@ class JDCModel:
         """Find the project root dynamically based on 'thesis_main_files'.
         If not found, classify as an attached project.
         """
-        import os
-        current = Path(os.getcwd()).resolve()
+        current = Path(__file__).resolve()
 
         # Traverse up to find 'thesis_main_files'
-        for parent in current.parents:
-            if parent.name == "thesis_main_files":
-                return parent.parents[4]  # Equivalent to .parents[5] in the script
+        # for parent in current.parents:
+        #     if parent.name == "thesis_main_files":
+        #         return parent.parents[4]  # Equivalent to .parents[5] in the script
 
         # If 'thesis_main_files' is not found, classify as attached project
         return current.parents[1]  # Equivalent to .parents[2] in the script
@@ -205,3 +204,5 @@ class JDCModel:
 # print("JDC Model loaded successfully and ready for use.")
 
 
+hd = JDCModel()
+print(hd.get_project_root())
