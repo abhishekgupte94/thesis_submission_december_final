@@ -8,7 +8,7 @@ class SWIN_EXECUTOR:
     def __init__(self,video_preprocess_dir = None):
         self.CHECKPOINT_PATH = "checkpoints/swin_base_patch244_window877_kinetics600_22k.pth"
         self.CONFIG_PATH = "configs/recognition/swin/custom_swin_feature_extraction.py"
-        self.vst_project = self.get_project_root("Video-Swin-Transformer")
+        self.vst_project = Path("/content/thesis_main_project_final_submission_in_april/Video-Swin-Transformer")#self.get_project_root("Video-Swin-Transformer")
         self.features_path = str(self.vst_project / "batch_features_lips.pt")
         self.video_preprocess_dir = video_preprocess_dir
     def get_project_root(self, project_name=None):

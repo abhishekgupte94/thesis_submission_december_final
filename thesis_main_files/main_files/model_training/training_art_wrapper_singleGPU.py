@@ -8,6 +8,7 @@ from thesis_main_files.models.data_loaders.data_loader_ART import (
     convert_paths
 )
 from thesis_main_files.main_files.evaluation.art.evaluator import EvaluatorClass
+from pathlib import Path
 class TrainingPipelineWrapper:
     def __init__(self, config=None):
         """
@@ -29,8 +30,9 @@ class TrainingPipelineWrapper:
         #  real_output_txt_path) = convert_paths()
         (csv_path, video_preprocess_dir, feature_dir_vid, video_dir, real_output_txt_path) = convert_paths()
         # Create dataset file paths
+        from pathlib import Path
         csv_name = config.get("csv_name", "training_data_two.csv")
-        video_paths, labels = create_file_paths(get_project_root(), csv_name)
+        video_paths, labels = create_file_paths(Path("/content/project_combined_repo_clean/thesis_main_files"), csv_name)
         self.evaluator = EvaluatorClass(device = config.get("device"))
         # Prepare the feature processor
         batch_size = config.get("batch_size", 128)
@@ -46,7 +48,7 @@ class TrainingPipelineWrapper:
 
         # Prepare the dataset
         dataset = VideoAudioDataset(
-            project_dir_curr=get_project_root(),
+            project_dir_curr= Path("/content/project_combined_repo_clean/thesis_main_files"),#get_project_root(),
             csv_name=csv_name
         )
 
@@ -111,7 +113,8 @@ class TrainingPipelineWrapper_DFDC:
         (csv_path, video_preprocess_dir, feature_dir_vid, video_dir, real_output_txt_path) = convert_paths()
         # Create dataset file paths
         csv_name = config.get("csv_name_dfdc", "training_data_two.csv")
-        video_paths, labels = create_file_paths(get_project_root(), csv_name)
+        video_paths, labels = create_file_paths(Path("/content/project_combined_repo_clean/thesis_main_files",#get_project_root()
+                                                 csv_name))
 
         # Prepare the feature processor
         batch_size = config.get("batch_size", 128)
@@ -127,7 +130,7 @@ class TrainingPipelineWrapper_DFDC:
 
         # Prepare the dataset
         dataset = VideoAudioDataset(
-            project_dir_curr=get_project_root(),
+            project_dir_curr=Path("/content/project_combined_repo_clean/thesis_main_files"),#get_project_root(),
             csv_name=csv_name
         )
 

@@ -560,7 +560,8 @@ def convert_paths():
     Returns:
         Tuple containing all path strings used for video preprocessing and feature extraction.
     """
-    project_dir_curr = get_project_root()
+    project_dir_curr = Path("/content/project_combined_repo_clean/thesis_main_files")
+    # project_dir_curr = get_project_root()
 
     # Construct paths used in processing
     csv_path = str(project_dir_curr / "datasets" / "processed" / "csv_files" / "lav_df" / "training_data" / "training_data_two.csv")
