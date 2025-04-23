@@ -52,25 +52,25 @@ class VideoPreprocessor_FANET:
                 return None
 
             processed_frames = 0
-            print(f"Processing {video_path} | Initial memory: {get_memory_usage():.2f} MB")
+            # print(f"Processing {video_path} | Initial memory: {get_memory_usage():.2f} MB")
 
             while True:
                 ret, frame = cap.read()
                 if not ret:
                     break
 
-                frame_mem = get_memory_usage()
+                # frame_mem = get_memory_usage()
                 result = self.process_frame(frame, out)
-                if result:
-                    processed_frames += 1
+                # if result:
+                    # processed_frames += 1
 
                 del frame
-                if processed_frames % 10 == 0:
-                    gc.collect()
-                    if self.device == 'cuda':
-                        torch.cuda.empty_cache()
+                # if processed_frames % 10 == 0:
+                #     gc.collect()
+                #     if self.device == 'cuda':
+                #         torch.cuda.empty_cache()
 
-                print(f"Frame {processed_frames} | Δ Memory: {get_memory_usage() - frame_mem:.2f} MB")
+                # print(f"Frame {processed_frames} | Δ Memory: {get_memory_usage() - frame_mem:.2f} MB")
 
             cap.release()
             out.release()
