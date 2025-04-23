@@ -35,12 +35,12 @@ class TrainingPipeline:
         for epoch in range(self.num_epochs):
             running_loss = 0.0
 
-            for video_paths, audio_paths, labels in self.dataloader:
+            for video_paths, labels in self.dataloader:
                 processed_audio_features, processed_video_features = self.feature_processor.create_datasubset(
                     csv_path=None,
                     use_preprocessed=False,
                     video_paths=video_paths,
-                    audio_paths=audio_paths
+                    audio_paths=video_paths
                 )
 
                 if processed_audio_features is None or processed_video_features is None:
