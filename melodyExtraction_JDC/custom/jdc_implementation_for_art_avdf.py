@@ -168,7 +168,8 @@ class JDCModel:
         """Find the project root dynamically based on 'thesis_main_files'.
         If not found, classify as an attached project.
         """
-        current = Path(__file__).resolve()
+        import os
+        current = Path(os.getcwd()).resolve()
 
         # Traverse up to find 'thesis_main_files'
         for parent in current.parents:

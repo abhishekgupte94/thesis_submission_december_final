@@ -104,8 +104,8 @@ class AudioPreprocessor:
                                                       batch_size=self.batch_size)
 
     def get_project_root(self,project_name=None):
-        current = Path(__file__).resolve()
-
+        import os
+        current = Path(os.getcwd()).resolve()
         # Locate the parent directory one level above 'thesis_main_files'
         for parent in current.parents:
             if parent.name == "thesis_main_files":

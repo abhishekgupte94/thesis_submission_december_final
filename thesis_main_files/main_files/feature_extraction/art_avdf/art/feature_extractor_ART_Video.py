@@ -12,7 +12,8 @@ class SWIN_EXECUTOR:
         self.features_path = str(self.vst_project / "batch_features_lips.pt")
         self.video_preprocess_dir = video_preprocess_dir
     def get_project_root(self, project_name=None):
-        current = Path(__file__).resolve()
+        import os
+        current = Path(os.getcwd()).resolve()
         for parent in current.parents:
             if parent.name == "thesis_main_files":
                 base_dir = parent.parent
