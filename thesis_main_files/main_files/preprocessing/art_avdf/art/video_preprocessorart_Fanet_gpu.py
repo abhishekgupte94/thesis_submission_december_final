@@ -131,6 +131,7 @@ class VideoPreprocessor_FANET:
         # ❌ REMOVED: joblib.Parallel for multi-video processing
         # 🔧 MODIFIED: Sequential single-GPU video processing
         for video_path in video_paths:
+            print("video done!")
             result = self.process_video(video_path)
             if result:
                 with open(self.real_output_txt_path, 'a') as f:
