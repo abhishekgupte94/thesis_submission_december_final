@@ -61,8 +61,10 @@ class TrainingPipeline:
                 self.writer.add_scalar("Loss/train", loss.item(), global_step)
                 global_step += 1
                 if (epoch + 1) % 50 == 0:
-                    save_path = os.path.join(checkpoint_dir, f"art_checkpoint_epoch_{epoch + 1}.pt")
-                    self.start_evaluation(self.model, audio_features, video_features,similarity_matrix = similarity_matrix, t_sne_save_path=f"t_sne_{epoch + 1}.png",retrieval_save_path=f"retrieval_epoch_{epoch + 1}.pt")
+                    save_path_tsne = os.path.join(checkpoint_dir, f"t_sne_{epoch + 1}.png")
+                    save_path_retrieval = os.path.join(checkpoint_dir, f"retrieval_{epoch + 1}.png")
+
+                    self.start_evaluation(self.model, audio_features, video_features,similarity_matrix = similarity_matrix, t_sne_save_path=save_path_tsne,retrieval_save_path=save_path_retrieval)
             avg_loss = running_loss / len(self.dataloader)
             print(f"Epoch [{epoch + 1}/{self.num_epochs}], Loss: {avg_loss:.4f}")
         # ✅ Save checkpoint every 10 epochs
