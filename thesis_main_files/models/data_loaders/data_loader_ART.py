@@ -487,7 +487,7 @@
 from torch.utils.data import Dataset
 
 # Importing required modules for video/audio preprocessing and feature extraction
-from thesis_main_files.main_files.preprocessing.art_avdf.art.video_preprocessorart_Fanet import VideoPreprocessor_FANET
+from thesis_main_files.main_files.preprocessing.art_avdf.art.video_preprocessorart_Fanet_gpu import VideoPreprocessor_FANET
 from thesis_main_files.main_files.feature_extraction.art_avdf.art.feature_extractor_ART_Video import SWIN_EXECUTOR as VideoFeatureExtractor
 from thesis_main_files.main_files.preprocessing.art_avdf.art.audio_preprocessorart import AudioPreprocessor
 from pathlib import Path
