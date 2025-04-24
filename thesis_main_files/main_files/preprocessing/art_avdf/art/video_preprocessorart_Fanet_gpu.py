@@ -296,13 +296,19 @@ class VideoPreprocessor_FANET:
             print(f"⚠️ Batch landmark error: {str(e)}")
             return
 
-        for orig_frame, landmarks in zip(original_batch, landmarks_batch or []):
-            # if landmarks is None or  len(landmarks) == 0:
-            #     continue
+        for orig_frame, landmarks_per_frame in zip(original_batch, landmarks_batch or []):
+            if landmarks_per_frame is None or not isinstance(landmarks_per_frame, list) or len(
+                    landmarks_per_frame) == 0:
+                print("⚠️ No face detected in frame.")
+                continue
 
             try:
-                single_face_landmarks = landmarks[0]
+                # Always take the first detected face landmarks
+                single_face_landmarks = landmarks_per_frame[0]
+
+                # Now try lip extraction
                 lip_segment, _ = self.extract_lip_segment(orig_frame, single_face_landmarks)
+
                 print(f"Lip segemnt size {lip_segment.size}")
                 if  lip_segment.size == 0:
                     continue
