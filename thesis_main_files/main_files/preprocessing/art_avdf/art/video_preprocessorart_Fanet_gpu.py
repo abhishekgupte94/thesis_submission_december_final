@@ -286,12 +286,12 @@ class VideoPreprocessor_FANET:
         try:
             batch_tensor = torch.stack([
                 torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
-                for img in rgb_batch
+                for img in original_batch
             ]).to(self.device)
             print(f"🧪 Batch tensor shape: {batch_tensor.shape}, dtype: {batch_tensor.dtype}")
 
             # landmarks_batch = self.fa.get_landmarks_from_batch(batch_tensor)
-            landmarks_batch = self.fa.get_landmarks_from_batch(rgb_batch)
+            landmarks_batch = self.fa.get_landmarks_from_batch(batch_tensor)
 
             print(f"➡️ Landmarks detected: {len(landmarks_batch or [])}")
 
