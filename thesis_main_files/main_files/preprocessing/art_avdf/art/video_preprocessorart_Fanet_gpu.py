@@ -274,7 +274,11 @@ class VideoPreprocessor_FANET:
             out.release()
             del cap, out
 
-            conversion_cmd = f"ffmpeg -y -i \"{avi_output_path}\" -vcodec libx264 \"{output_video_path}\""
+            conversion_cmd = (
+                f"ffmpeg -y -analyzeduration 100M -probesize 100M "
+                f"-f avi -pix_fmt yuv420p -i \"{avi_output_path}\" "
+                f"-vcodec libx264 -preset veryfast \"{output_video_path}\""
+            )
             print(f"📦 Converting AVI to MP4...")
             os.system(conversion_cmd)
             os.remove(avi_output_path)
