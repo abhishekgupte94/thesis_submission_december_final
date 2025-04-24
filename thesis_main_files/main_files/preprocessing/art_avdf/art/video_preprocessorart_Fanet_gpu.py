@@ -303,7 +303,7 @@ class VideoPreprocessor_FANET:
             try:
                 single_face_landmarks = landmarks[0]
                 lip_segment, _ = self.extract_lip_segment(orig_frame, single_face_landmarks)
-
+                print(lip_segment.size)
                 if  lip_segment.size == 0:
                     continue
 
