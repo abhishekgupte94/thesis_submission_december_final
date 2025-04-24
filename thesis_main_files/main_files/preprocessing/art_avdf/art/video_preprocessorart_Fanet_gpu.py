@@ -239,21 +239,20 @@ class VideoPreprocessor_FANET:
         try:
             cap = cv2.VideoCapture(video_path)
             if not cap.isOpened():
-                print(f"Error opening video: {video_path}")
+                print(f"❌ Error opening video: {video_path}")
                 return None
 
             fps = int(cap.get(cv2.CAP_PROP_FPS))
             lip_video_size = (224, 224)
-            mp4_output_path = os.path.join(self.output_base_dir_real, f"{video_name}_lips_only.mp4")
+
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # H.264-compatible codec
-            out = cv2.VideoWriter(mp4_output_path, fourcc, fps, lip_video_size)
+            out = cv2.VideoWriter(output_video_path, fourcc, fps, lip_video_size)
 
             if not out.isOpened():
-                print(f"❌ Error creating AVI output: {mp4_output_path}")
+                print(f"❌ Error creating MP4 output: {output_video_path}")
                 return None
 
-            frame_buffer = []
-            original_frames = []
+            frame_buffer, original_frames = [], []
 
             while True:
                 ret, frame = cap.read()
@@ -266,8 +265,8 @@ class VideoPreprocessor_FANET:
 
                 if len(frame_buffer) >= self.batch_size:
                     self._process_batch(frame_buffer, original_frames, out)
-                    frame_buffer = []
-                    original_frames = []
+                    frame_buffer.clear()
+                    original_frames.clear()
 
             if frame_buffer:
                 self._process_batch(frame_buffer, original_frames, out)
@@ -276,96 +275,12 @@ class VideoPreprocessor_FANET:
             out.release()
             del cap, out
 
-            # conversion_cmd = (
-            #     f"ffmpeg -y -analyzeduration 100M -probesize 100M "
-            #     f"-f avi -pix_fmt yuv420p -i \"{avi_output_path}\" "
-            #     f"-vcodec libx264 -preset veryfast \"{output_video_path}\""
-            # )
-            # print(f"📦 Converting AVI to MP4...")
-            # os.system(conversion_cmd)
-            # os.remove(avi_output_path)
             print(f"📸 Total frames written: {self.frames_written}")
-
-            return output_video_path
+            return output_video_path if self.frames_written > 0 else None
 
         except Exception as e:
-            print(f"Error processing {video_path}: {str(e)}")
+            print(f"❌ Error processing {video_path}: {str(e)}")
             return None
-
-    def _process_batch(self, rgb_batch, original_batch, out_writer):
-        try:
-            # Convert batch to torch tensor: shape (B, 3, H, W), float32, normalized to [0, 1]
-            batch_tensor = torch.stack([
-                torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
-                for img in rgb_batch
-            ]).to(self.device)
-
-            # Pass tensor to model
-            landmarks_batch = self.fa.get_landmarks_from_batch(batch_tensor)
-
-            print(f"➡️ Landmarks detected: {len(landmarks_batch or [])}")
-        except Exception as e:
-            print(f"⚠️ Batch landmark error: {str(e)}")
-            return
-
-        for orig_frame, landmarks in zip(original_batch, landmarks_batch or []):
-            if landmarks is None or not isinstance(landmarks, list) or len(landmarks) == 0:
-                continue
-            try:
-                # Extract landmarks for the first detected face
-                single_face_landmarks = landmarks[0]
-
-                # Get lip crop from original frame
-                lip_segment, _ = self.extract_lip_segment(orig_frame, single_face_landmarks)
-                print(f"Crop shape: {lip_segment.shape}")
-
-                if not isinstance(lip_segment, np.ndarray) or lip_segment.size == 0:
-                    continue
-
-                # Resize and convert to BGR (for correct MJPG/AVI output)
-                lip_resized = cv2.resize(lip_segment, (224, 224), interpolation=cv2.INTER_CUBIC)
-                lip_resized_bgr = cv2.cvtColor(lip_resized, cv2.COLOR_RGB2BGR)
-                # Write to output
-                out_writer.write(lip_resized_bgr)
-            except Exception as e:
-                print(f"⚠️ Lip extraction error: {str(e)}")
-                continue
-
-    def extract_lip_segment(self, frame, landmarks):
-        lip_landmarks = landmarks[48:]
-        x_coords = lip_landmarks[:, 0].astype(int)
-        y_coords = lip_landmarks[:, 1].astype(int)
-
-        x_min, x_max = np.clip([x_coords.min(), x_coords.max()], 0, frame.shape[1] - 1)
-        y_min, y_max = np.clip([y_coords.min(), y_coords.max()], 0, frame.shape[0] - 1)
-
-        # Optional padding
-        pad = 5
-        x_min = max(x_min - pad, 0)
-        x_max = min(x_max + pad, frame.shape[1] - 1)
-        y_min = max(y_min - pad, 0)
-        y_max = min(y_max + pad, frame.shape[0] - 1)
-
-        if x_max <= x_min or y_max <= y_min:
-            print(f"⚠️ Invalid lip crop: x({x_min}:{x_max}), y({y_min}:{y_max})")
-            return np.array([]), (x_min, y_min, x_max, y_max)
-
-        lip_crop = frame[y_min:y_max, x_min:x_max]
-        print(f"✅ Lip segment shape: {lip_crop.shape}")
-        return lip_crop, (x_min, y_min, x_max, y_max)
-
-    def main(self, video_paths):
-        processed_paths = []
-
-        for video_path in video_paths:
-            result = self.process_video(video_path)
-            if result:
-                with open(self.real_output_txt_path, 'w') as f:
-                    f.write(f"{os.path.basename(result)} 0\n")
-                processed_paths.append(result)
-
-        print(f"✅ Processed {len(processed_paths)} videos.")
-        return
 
     def main_parallel(self, video_paths, max_workers=2):
         processed_paths = []
