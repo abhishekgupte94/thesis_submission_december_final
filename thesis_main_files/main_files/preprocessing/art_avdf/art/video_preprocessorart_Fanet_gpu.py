@@ -311,7 +311,8 @@ class VideoPreprocessor_FANET:
 
             try:
                 # Always take the first detected face landmarks
-                single_face_landmarks = landmarks_per_frame[0]
+                # ✅ Correct:
+                single_face_landmarks = landmarks_per_frame
 
                 # Now try lip extraction
                 lip_segment, _ = self.extract_lip_segment(orig_frame, single_face_landmarks)
