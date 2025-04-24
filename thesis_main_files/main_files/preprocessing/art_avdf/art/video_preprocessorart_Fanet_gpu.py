@@ -304,7 +304,7 @@ class VideoPreprocessor_FANET:
                 single_face_landmarks = landmarks[0]
                 lip_segment, _ = self.extract_lip_segment(orig_frame, single_face_landmarks)
 
-                if not isinstance(lip_segment, np.ndarray) or lip_segment.size == 0:
+                if  lip_segment.size == 0:
                     continue
 
                 lip_resized = cv2.resize(lip_segment, (224, 224), interpolation=cv2.INTER_CUBIC)
