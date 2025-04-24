@@ -386,3 +386,21 @@ class VideoPreprocessor_FANET:
 
         print(f"Post-cleanup memory: {get_memory_usage():.2f} MB")
         return processed_paths
+
+    def main(self, video_paths):
+        processed_paths = []
+
+        for video_path in video_paths:
+            print(f"🎞️ Processing: {video_path}")
+            result = self.process_video(video_path)
+
+            if result:
+                with open(self.real_output_txt_path, 'w') as f:
+                    f.write(f"{os.path.basename(result)} 0\n")  # Label '0' for real
+                processed_paths.append(result)
+            else:
+                print(f"❌ Skipped or failed: {video_path}")
+
+        print(f"✅ Finished processing {len(processed_paths)} out of {len(video_paths)} videos.")
+        return processed_paths
+
