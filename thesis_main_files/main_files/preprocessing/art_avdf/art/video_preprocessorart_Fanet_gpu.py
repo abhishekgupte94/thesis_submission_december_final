@@ -293,13 +293,13 @@ class VideoPreprocessor_FANET:
         try:
             # Convert batch to torch tensor: shape (B, 3, H, W), float32, normalized to [0, 1]
             batch_tensor = torch.stack([
-                torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
+                torch.from_numpy(img)
                 for img in rgb_batch
             ]).to(self.device)
 
             # Pass tensor to model
             landmarks_batch = self.fa.get_landmarks_from_batch(batch_tensor)
-
+            print(f"➡️ Landmarks detected: {len(landmarks_batch or [])}")
         except Exception as e:
             print(f"⚠️ Batch landmark error: {str(e)}")
             return
