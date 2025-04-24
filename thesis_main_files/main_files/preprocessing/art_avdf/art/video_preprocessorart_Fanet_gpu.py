@@ -286,7 +286,7 @@ class VideoPreprocessor_FANET:
         try:
             batch_tensor = torch.stack([
                 torch.from_numpy(img).permute(2, 0, 1).float()# / 255.0
-                for img in original_batch
+                for img in rgb_batch
             ]).to(self.device)
             print(f"🧪 Batch tensor shape: {batch_tensor.shape}, dtype: {batch_tensor.dtype}")
 
@@ -296,15 +296,15 @@ class VideoPreprocessor_FANET:
             print(f"➡️ Landmarks detected: {len(landmarks_batch or [])}")
 
             print(f"🧠 Type of landmarks_batch: {type(landmarks_batch)}")
-            for i, landmarks in enumerate(landmarks_batch or []):
-                print(f"   Frame {i} → Type: {type(landmarks)}, Value: {landmarks}")
+            # for i, landmarks in enumerate(landmarks_batch or []):
+            #     print(f"   Frame {i} → Type: {type(landmarks)}, Value: {landmarks}")
         except Exception as e:
             print(f"⚠️ Batch landmark error: {str(e)}")
             return
 
 
         for orig_frame, landmarks_per_frame in zip(original_batch, landmarks_batch or []):
-            if landmarks_per_frame is None or not isinstance(landmarks_per_frame, list) or len(
+            if landmarks_per_frame is None or len(
                     landmarks_per_frame) == 0:
                 print("⚠️ No face detected in frame.")
                 continue
@@ -316,7 +316,7 @@ class VideoPreprocessor_FANET:
                 # Now try lip extraction
                 lip_segment, _ = self.extract_lip_segment(orig_frame, single_face_landmarks)
 
-                print(f"Lip segemnt size {lip_segment.size}")
+                print(f"Lip segment size {lip_segment.size}")
                 if  lip_segment.size == 0:
                     continue
 
