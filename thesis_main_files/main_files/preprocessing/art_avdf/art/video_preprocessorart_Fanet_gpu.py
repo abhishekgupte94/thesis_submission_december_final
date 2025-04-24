@@ -285,7 +285,7 @@ class VideoPreprocessor_FANET:
     def _process_batch(self, rgb_batch, original_batch, out_writer):
         try:
             batch_tensor = torch.stack([
-                torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
+                torch.from_numpy(img).permute(2, 0, 1).float()# / 255.0
                 for img in original_batch
             ]).to(self.device)
             print(f"🧪 Batch tensor shape: {batch_tensor.shape}, dtype: {batch_tensor.dtype}")
