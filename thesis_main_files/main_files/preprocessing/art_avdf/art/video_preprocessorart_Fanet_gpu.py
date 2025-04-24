@@ -297,7 +297,7 @@ class VideoPreprocessor_FANET:
             return
 
         for orig_frame, landmarks in zip(original_batch, landmarks_batch or []):
-            if landmarks is None or not isinstance(landmarks, list) or len(landmarks) == 0:
+            if landmarks is None or  len(landmarks) == 0:
                 continue
 
             try:
