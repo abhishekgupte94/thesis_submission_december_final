@@ -322,7 +322,7 @@ class VideoPreprocessor_FANET:
         for video_path in video_paths:
             result = self.process_video(video_path)
             if result:
-                with open(self.real_output_txt_path, 'a') as f:
+                with open(self.real_output_txt_path, 'w') as f:
                     f.write(f"{os.path.basename(result)} 0\n")
                 processed_paths.append(result)
 
