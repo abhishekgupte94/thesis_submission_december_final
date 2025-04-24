@@ -319,30 +319,23 @@ class VideoPreprocessor_FANET:
                 continue
 
     def extract_lip_segment(self, frame, landmarks):
-        # Extract 68-point landmarks starting from mouth: points 48 to 67
+        # Use 68-point landmarks → mouth is from index 48 to 67
         lip_landmarks = landmarks[48:]
 
-        # Get x and y coordinates of the lips
+        # Get x and y coordinates
         x_coords = lip_landmarks[:, 0].astype(int)
         y_coords = lip_landmarks[:, 1].astype(int)
 
-        # Compute tight bounding box
+        # Get bounding box of lip landmarks
         x_min, x_max = np.clip([x_coords.min(), x_coords.max()], 0, frame.shape[1] - 1)
         y_min, y_max = np.clip([y_coords.min(), y_coords.max()], 0, frame.shape[0] - 1)
 
-        # Add optional padding (tweakable)
-        pad = 5
-        x_min = max(x_min - pad, 0)
-        x_max = min(x_max + pad, frame.shape[1] - 1)
-        y_min = max(y_min - pad, 0)
-        y_max = min(y_max + pad, frame.shape[0] - 1)
-
-        # Check if the crop box is valid
+        # Simple check to avoid bad crops
         if x_max <= x_min or y_max <= y_min:
             print(f"⚠️ Invalid lip crop: x({x_min}:{x_max}), y({y_min}:{y_max})")
             return np.array([]), (x_min, y_min, x_max, y_max)
 
-        # Extract lip region from the original BGR frame
+        # Extract the region from the original frame
         lip_crop = frame[y_min:y_max, x_min:x_max]
         print(f"✅ Lip segment shape: {lip_crop.shape}")
 
