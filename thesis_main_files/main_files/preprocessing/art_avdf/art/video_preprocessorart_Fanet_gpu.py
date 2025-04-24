@@ -318,7 +318,7 @@ class VideoPreprocessor_FANET:
 
             # Define output path and codec (MP4 + H.264)
             mp4_output_path = os.path.join(self.output_base_dir_real, f"{video_name}_lips_only.mp4")
-            fourcc = cv2.VideoWriter_fourcc(*'avc1')  # Use 'avc1' for H.264; fallback 'mp4v' if needed
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Use 'avc1' for H.264; fallback 'mp4v' if needed
             out = cv2.VideoWriter(mp4_output_path, fourcc, fps, frame_size)
 
             # Optional: Check if VideoWriter opened successfully
