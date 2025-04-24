@@ -242,12 +242,12 @@ class VideoPreprocessor_FANET:
 
             fps = int(cap.get(cv2.CAP_PROP_FPS))
             lip_video_size = (224, 224)
-            avi_output_path = os.path.join(self.output_base_dir_real, f"{video_name}_lips_only.avi")
-            fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-            out = cv2.VideoWriter(avi_output_path, fourcc, fps, lip_video_size)
+            mp4_output_path = os.path.join(self.output_base_dir_real, f"{video_name}_lips_only.mp4")
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # H.264-compatible codec
+            out = cv2.VideoWriter(mp4_output_path, fourcc, fps, lip_video_size)
 
             if not out.isOpened():
-                print(f"❌ Error creating AVI output: {avi_output_path}")
+                print(f"❌ Error creating AVI output: {mp4_output_path}")
                 return None
 
             frame_buffer = []
@@ -274,14 +274,14 @@ class VideoPreprocessor_FANET:
             out.release()
             del cap, out
 
-            conversion_cmd = (
-                f"ffmpeg -y -analyzeduration 100M -probesize 100M "
-                f"-f avi -pix_fmt yuv420p -i \"{avi_output_path}\" "
-                f"-vcodec libx264 -preset veryfast \"{output_video_path}\""
-            )
-            print(f"📦 Converting AVI to MP4...")
-            os.system(conversion_cmd)
-            os.remove(avi_output_path)
+            # conversion_cmd = (
+            #     f"ffmpeg -y -analyzeduration 100M -probesize 100M "
+            #     f"-f avi -pix_fmt yuv420p -i \"{avi_output_path}\" "
+            #     f"-vcodec libx264 -preset veryfast \"{output_video_path}\""
+            # )
+            # print(f"📦 Converting AVI to MP4...")
+            # os.system(conversion_cmd)
+            # os.remove(avi_output_path)
 
             return output_video_path
 
