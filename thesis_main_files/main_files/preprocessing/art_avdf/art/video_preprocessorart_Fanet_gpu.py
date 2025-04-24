@@ -339,7 +339,20 @@ class VideoPreprocessor_FANET:
         x_min, x_max = np.clip([x_coords.min(), x_coords.max()], 0, frame.shape[1] - 1)
         y_min, y_max = np.clip([y_coords.min(), y_coords.max()], 0, frame.shape[0] - 1)
 
-        return frame[y_min:y_max, x_min:x_max], (x_min, y_min, x_max, y_max)
+        # Optional padding
+        pad = 5
+        x_min = max(x_min - pad, 0)
+        x_max = min(x_max + pad, frame.shape[1] - 1)
+        y_min = max(y_min - pad, 0)
+        y_max = min(y_max + pad, frame.shape[0] - 1)
+
+        if x_max <= x_min or y_max <= y_min:
+            print(f"⚠️ Invalid lip crop: x({x_min}:{x_max}), y({y_min}:{y_max})")
+            return np.array([]), (x_min, y_min, x_max, y_max)
+
+        lip_crop = frame[y_min:y_max, x_min:x_max]
+        print(f"✅ Lip segment shape: {lip_crop.shape}")
+        return lip_crop, (x_min, y_min, x_max, y_max)
 
     def main(self, video_paths):
         processed_paths = []
