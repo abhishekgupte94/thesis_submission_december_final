@@ -297,8 +297,9 @@ class VideoPreprocessor_FANET:
                 continue
             try:
                 lip_segment, _ = self.extract_lip_segment(orig_frame, landmarks)
-                if lip_segment.size == 0:
+                if not isinstance(lip_segment, np.ndarray) or lip_segment.size == 0:
                     continue
+
                 lip_resized = cv2.resize(lip_segment, (224, 224), interpolation=cv2.INTER_CUBIC)
                 out_writer.write(lip_resized)
             except Exception as e:
