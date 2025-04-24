@@ -271,7 +271,7 @@ import numpy as np
 from tqdm import tqdm
 from pathlib import Path
 import torch.multiprocessing as tmp
-
+import subprocess
 torch.backends.cudnn.benchmark = True
 
 
@@ -309,13 +309,19 @@ class VideoPreprocessor_FANET:
                 print(f"❌ Error opening video: {video_path}")
                 return None
 
+            # Setup
             fps = cap.get(cv2.CAP_PROP_FPS)
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             frame_size = (width, height)
 
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            out = cv2.VideoWriter(output_video_path, fourcc, fps, frame_size)
+            # Output path (AVI for safe OpenCV write)
+            avi_output_path = os.path.join(self.output_base_dir_real, f"{video_name}_lips_only.avi")
+            fourcc = cv2.VideoWriter_fourcc(*'XVID')
+            out = cv2.VideoWriter(avi_output_path, fourcc, fps, frame_size)
+
+            if not out.isOpened():
+                raise RuntimeError("❌ VideoWriter failed to open. Use XVID and .avi")
 
             if not out.isOpened():
                 print(f"❌ Error creating MP4 output: {output_video_path}")
@@ -341,6 +347,18 @@ class VideoPreprocessor_FANET:
             cap.release()
             out.release()
             del cap, out
+            # import subprocess
+
+            mp4_output_path = avi_output_path.replace(".avi", ".mp4")
+            subprocess.run([
+                "ffmpeg", "-y",
+                "-i", avi_output_path,
+                "-vcodec", "libx264",
+                "-pix_fmt", "yuv420p",
+                mp4_output_path
+            ])
+
+            os.remove(avi_output_path)
 
             print(f"📸 Total frames written: {self.frames_written}")
             return output_video_path if self.frames_written > 0 else None
