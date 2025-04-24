@@ -12,6 +12,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 torch.backends.cudnn.benchmark = True
 
+import multiprocessing as mp
+from torch.multiprocessing import spawn
 
 def get_memory_usage():
     process = psutil.Process(os.getpid())
@@ -162,45 +164,45 @@ class VideoPreprocessor_FANET:
         print(f"✅ Lip segment shape: {lip_crop.shape}")
 
         return lip_crop, (x_min, y_min, x_max, y_max)
-
-    def main_parallel(self, video_paths, max_workers=2):
-        processed_paths = []
-        print(f"🧵 Starting parallel video processing with {max_workers} workers...")
-
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(self.process_video, vp): vp for vp in video_paths}
-
-            for future in tqdm(as_completed(futures), total=len(video_paths), desc="📦 Processing videos"):
-                result = future.result()
-                if result:
-                    processed_paths.append(result)
-
-        if self.real_output_txt_path and processed_paths:
-            with open(self.real_output_txt_path, 'w') as f:
-                for path in processed_paths:
-                    f.write(f"{os.path.basename(path)} 0\n")
-
-        print(f"✅ Processed {len(processed_paths)} videos.")
-        return processed_paths
-
-    def main_single(self, real_video_single):
-        processed_paths = []
-
-        print(f"\nProcessing single video")
-        print(f"Start memory: {get_memory_usage():.2f} MB")
-
-        result = self.process_video(real_video_single)
-        if result:
-            with open(self.real_output_txt_path, 'w') as f:
-                f.write(f"{os.path.basename(result)} 0\n")
-            processed_paths.append(result)
-
-        gc.collect()
-        if self.device == 'cuda':
-            torch.cuda.empty_cache()
-
-        print(f"Post-cleanup memory: {get_memory_usage():.2f} MB")
-        return processed_paths
+    #
+    # def main_parallel(self, video_paths, max_workers=2):
+    #     processed_paths = []
+    #     print(f"🧵 Starting parallel video processing with {max_workers} workers...")
+    #
+    #     with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    #         futures = {executor.submit(self.process_video, vp): vp for vp in video_paths}
+    #
+    #         for future in tqdm(as_completed(futures), total=len(video_paths), desc="📦 Processing videos"):
+    #             result = future.result()
+    #             if result:
+    #                 processed_paths.append(result)
+    #
+    #     if self.real_output_txt_path and processed_paths:
+    #         with open(self.real_output_txt_path, 'w') as f:
+    #             for path in processed_paths:
+    #                 f.write(f"{os.path.basename(path)} 0\n")
+    #
+    #     print(f"✅ Processed {len(processed_paths)} videos.")
+    #     return processed_paths
+    #
+    # def main_single(self, real_video_single):
+    #     processed_paths = []
+    #
+    #     print(f"\nProcessing single video")
+    #     print(f"Start memory: {get_memory_usage():.2f} MB")
+    #
+    #     result = self.process_video(real_video_single)
+    #     if result:
+    #         with open(self.real_output_txt_path, 'w') as f:
+    #             f.write(f"{os.path.basename(result)} 0\n")
+    #         processed_paths.append(result)
+    #
+    #     gc.collect()
+    #     if self.device == 'cuda':
+    #         torch.cuda.empty_cache()
+    #
+    #     print(f"Post-cleanup memory: {get_memory_usage():.2f} MB")
+    #     return processed_paths
 
     def main(self, video_paths):
         processed_paths = []
@@ -219,3 +221,43 @@ class VideoPreprocessor_FANET:
         print(f"✅ Finished processing {len(processed_paths)} out of {len(video_paths)} videos.")
         return processed_paths
 
+
+    def worker_process(rank, video_paths, output_dir, output_txt, batch_size):
+        print(f"🚀 Worker {rank} started with {len(video_paths)} videos.")
+
+        processor = VideoPreprocessor_FANET(
+            batch_size=batch_size,
+            output_base_dir_real=output_dir,
+            real_output_txt_path=None  # Avoid write conflict
+        )
+
+        results = []
+        for video_path in video_paths:
+            result = processor.process_video(video_path)
+            if result:
+                results.append(result)
+
+        return results
+
+    def parallel_main(self, video_paths, num_workers=8):
+        print(f"⚙️ Launching GPU-aware parallel processing with {num_workers} workers...")
+
+        # Split work evenly
+        chunks = [video_paths[i::num_workers] for i in range(num_workers)]
+        ctx = mp.get_context("spawn")
+        with ctx.Pool(num_workers) as pool:
+            results = pool.starmap(
+                self.worker_process,
+                [(i, chunk, self.output_base_dir_real, self.real_output_txt_path, self.batch_size)
+                 for i, chunk in enumerate(chunks)]
+            )
+
+        # Flatten and optionally save
+        flattened = [item for sublist in results for item in sublist if item]
+        if self.real_output_txt_path:
+            with open(self.real_output_txt_path, 'w') as f:
+                for path in flattened:
+                    f.write(f"{os.path.basename(path)} 0\n")
+
+        print(f"✅ Parallel processing done. Processed: {len(flattened)} videos.")
+        return flattened
