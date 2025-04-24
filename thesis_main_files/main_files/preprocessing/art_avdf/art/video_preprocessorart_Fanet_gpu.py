@@ -261,6 +261,8 @@
 #
 #         print(f"✅ Parallel processing done. Processed: {len(flattened)} videos.")
 #         return flattened
+
+
 import os
 import gc
 import cv2
@@ -272,13 +274,12 @@ from tqdm import tqdm
 from pathlib import Path
 import torch.multiprocessing as tmp
 import subprocess
-torch.backends.cudnn.benchmark = True
 
+torch.backends.cudnn.benchmark = True
 
 def get_memory_usage():
     process = psutil.Process(os.getpid())
     return process.memory_info().rss / 1024 / 1024  # MB
-
 
 class VideoPreprocessor_FANET:
     def __init__(self, batch_size=32, output_base_dir_real=None, real_output_txt_path=None):
@@ -299,7 +300,6 @@ class VideoPreprocessor_FANET:
 
     def process_video(self, video_path):
         self.frames_written = 0
-
         video_name = os.path.basename(video_path).split('.')[0]
         output_video_path = os.path.join(self.output_base_dir_real, f"{video_name}_lips_only.mp4")
 
@@ -309,23 +309,17 @@ class VideoPreprocessor_FANET:
                 print(f"❌ Error opening video: {video_path}")
                 return None
 
-            # Setup
             fps = cap.get(cv2.CAP_PROP_FPS)
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            frame_size = (width, height)
+            self.width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            self.height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            frame_size = (self.width, self.height)
 
-            # Output path (AVI for safe OpenCV write)
             avi_output_path = os.path.join(self.output_base_dir_real, f"{video_name}_lips_only.avi")
             fourcc = cv2.VideoWriter_fourcc(*'XVID')
             out = cv2.VideoWriter(avi_output_path, fourcc, fps, frame_size)
 
             if not out.isOpened():
                 raise RuntimeError("❌ VideoWriter failed to open. Use XVID and .avi")
-
-            if not out.isOpened():
-                print(f"❌ Error creating MP4 output: {output_video_path}")
-                return None
 
             frame_buffer, original_frames = [], []
 
@@ -336,18 +330,21 @@ class VideoPreprocessor_FANET:
 
                 original_frames.append(frame)
 
-                if len(frame_buffer) >= self.batch_size:
-                    self._process_batch(frame_buffer, original_frames, out)
-                    frame_buffer.clear()
+                if len(original_frames) >= self.batch_size:
+                    self._process_batch(original_frames, out)
                     original_frames.clear()
 
-            if frame_buffer:
-                self._process_batch(frame_buffer, original_frames, out)
+            if original_frames:
+                self._process_batch(original_frames, out)
 
             cap.release()
             out.release()
-            del cap, out
-            # import subprocess
+
+            # 💥 Aggressively clear memory
+            del cap, out, frame_buffer, original_frames
+            gc.collect()
+            if self.device == 'cuda':
+                torch.cuda.empty_cache()
 
             mp4_output_path = avi_output_path.replace(".avi", ".mp4")
             subprocess.run([
@@ -359,15 +356,15 @@ class VideoPreprocessor_FANET:
             ])
 
             os.remove(avi_output_path)
-
             print(f"📸 Total frames written: {self.frames_written}")
+
             return output_video_path if self.frames_written > 0 else None
 
         except Exception as e:
             print(f"❌ Error processing {video_path}: {str(e)}")
             return None
 
-    def _process_batch(self, rgb_batch, original_batch, out_writer):
+    def _process_batch(self, original_batch, out_writer):
         try:
             batch_tensor = torch.stack([
                 torch.from_numpy(img).permute(2, 0, 1).float()
@@ -375,6 +372,10 @@ class VideoPreprocessor_FANET:
             ]).to(self.device)
 
             landmarks_batch = self.fa.get_landmarks_from_batch(batch_tensor)
+
+            # 💥 Free tensor from memory
+            del batch_tensor
+            torch.cuda.empty_cache()
 
         except Exception as e:
             print(f"⚠️ Batch landmark error: {str(e)}")
@@ -392,13 +393,19 @@ class VideoPreprocessor_FANET:
                 if lip_segment.size == 0:
                     continue
 
-                lip_resized = cv2.resize(lip_segment, (224, 224), interpolation=cv2.INTER_CUBIC)
+                lip_resized = cv2.resize(lip_segment, (self.width, self.height))
                 out_writer.write(lip_resized)
                 self.frames_written += 1
 
             except Exception as e:
                 print(f"⚠️ Lip extraction error: {str(e)}")
                 continue
+
+        # 💥 Free batch memory
+        del original_batch, landmarks_batch
+        gc.collect()
+        if self.device == 'cuda':
+            torch.cuda.empty_cache()
 
     def extract_lip_segment(self, frame, landmarks):
         lip_landmarks = landmarks[48:]
