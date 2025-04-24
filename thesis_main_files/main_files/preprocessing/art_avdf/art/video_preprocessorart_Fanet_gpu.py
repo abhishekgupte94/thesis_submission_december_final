@@ -296,12 +296,16 @@ class VideoPreprocessor_FANET:
             if landmarks is None:
                 continue
             try:
-                lip_segment, _ = self.extract_lip_segment(orig_frame, landmarks)
+                # Since only one face, use landmarks[0]
+                single_face_landmarks = landmarks[0]  # ✅ This fixes the .size error
+
+                lip_segment, _ = self.extract_lip_segment(orig_frame, single_face_landmarks)
                 if not isinstance(lip_segment, np.ndarray) or lip_segment.size == 0:
                     continue
 
                 lip_resized = cv2.resize(lip_segment, (224, 224), interpolation=cv2.INTER_CUBIC)
                 out_writer.write(lip_resized)
+
             except Exception as e:
                 print(f"⚠️ Lip extraction error: {str(e)}")
                 continue
