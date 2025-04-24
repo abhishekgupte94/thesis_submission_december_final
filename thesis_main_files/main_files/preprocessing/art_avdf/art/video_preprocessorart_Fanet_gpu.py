@@ -293,7 +293,7 @@ class VideoPreprocessor_FANET:
         try:
             # Convert batch to torch tensor: shape (B, 3, H, W), float32, normalized to [0, 1]
             batch_tensor = torch.stack([
-                torch.from_numpy(img).permute(2, 0, 1).float()
+                torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
                 for img in rgb_batch
             ]).to(self.device)
 
