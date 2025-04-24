@@ -56,7 +56,7 @@ class VideoPreprocessor_FANET:
 
             # Use .mp4v or fallback to .XVID
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            out = cv2.VideoWriter(self.output_base_dir_real, fourcc, fps, frame_size)
+            out = cv2.VideoWriter(output_video_path, fourcc, fps, frame_size)
 
             if not out.isOpened():
                 print(f"❌ Error creating MP4 output: {output_video_path}")

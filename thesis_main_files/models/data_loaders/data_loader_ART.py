@@ -586,7 +586,7 @@ class VideoComponentExtractor:
     def extract_video_components(self, video_paths, video_save_dir, output_txt_file, batch_size, video_preprocessor):
         try:
             # Process video paths using preprocessor
-            return_paths = video_preprocessor.main(video_paths)
+            return_paths = video_preprocessor.parallel_main(video_paths)
             return return_paths.copy()
         except Exception as e:
             print(f"Error preprocessing video paths {video_paths}: {e}")
