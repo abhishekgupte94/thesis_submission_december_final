@@ -224,7 +224,7 @@ class VideoPreprocessor_FANET:
         self.fa = face_alignment.FaceAlignment(
             face_alignment.LandmarksType.TWO_D,
             device=self.device,
-            face_detector='retinaface',
+            face_detector='sfd',
             flip_input=False
         )
 
