@@ -288,13 +288,18 @@ class VideoPreprocessor_FANET:
                 torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
                 for img in rgb_batch
             ]).to(self.device)
+            print(f"🧪 Batch tensor shape: {batch_tensor.shape}, dtype: {batch_tensor.dtype}")
 
             landmarks_batch = self.fa.get_landmarks_from_batch(batch_tensor)
             print(f"➡️ Landmarks detected: {len(landmarks_batch or [])}")
 
+            print(f"🧠 Type of landmarks_batch: {type(landmarks_batch)}")
+            for i, landmarks in enumerate(landmarks_batch or []):
+                print(f"   Frame {i} → Type: {type(landmarks)}, Value: {landmarks}")
         except Exception as e:
             print(f"⚠️ Batch landmark error: {str(e)}")
             return
+
 
         for orig_frame, landmarks_per_frame in zip(original_batch, landmarks_batch or []):
             if landmarks_per_frame is None or not isinstance(landmarks_per_frame, list) or len(
