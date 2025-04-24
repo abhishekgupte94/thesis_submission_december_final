@@ -297,8 +297,8 @@ class VideoPreprocessor_FANET:
             return
 
         for orig_frame, landmarks in zip(original_batch, landmarks_batch or []):
-            if landmarks is None or  len(landmarks) == 0:
-                continue
+            # if landmarks is None or  len(landmarks) == 0:
+            #     continue
 
             try:
                 single_face_landmarks = landmarks[0]
