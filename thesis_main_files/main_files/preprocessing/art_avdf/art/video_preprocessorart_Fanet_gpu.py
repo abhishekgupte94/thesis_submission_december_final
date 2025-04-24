@@ -290,7 +290,9 @@ class VideoPreprocessor_FANET:
             ]).to(self.device)
             print(f"🧪 Batch tensor shape: {batch_tensor.shape}, dtype: {batch_tensor.dtype}")
 
-            landmarks_batch = self.fa.get_landmarks_from_batch(batch_tensor)
+            # landmarks_batch = self.fa.get_landmarks_from_batch(batch_tensor)
+            landmarks_batch = self.fa.get_landmarks_from_batch(rgb_batch)
+
             print(f"➡️ Landmarks detected: {len(landmarks_batch or [])}")
 
             print(f"🧠 Type of landmarks_batch: {type(landmarks_batch)}")
