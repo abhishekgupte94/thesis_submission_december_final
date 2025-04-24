@@ -309,14 +309,21 @@ class VideoPreprocessor_FANET:
                 print(f"❌ Error opening video: {video_path}")
                 return None
 
+
+            # Extract video properties
             fps = cap.get(cv2.CAP_PROP_FPS)
             self.width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             self.height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             frame_size = (self.width, self.height)
 
-            avi_output_path = os.path.join(self.output_base_dir_real, f"{video_name}_lips_only.avi")
-            fourcc = cv2.VideoWriter_fourcc(*'XVID')
-            out = cv2.VideoWriter(avi_output_path, fourcc, fps, frame_size)
+            # Define output path and codec (MP4 + H.264)
+            mp4_output_path = os.path.join(self.output_base_dir_real, f"{video_name}_lips_only.mp4")
+            fourcc = cv2.VideoWriter_fourcc(*'avc1')  # Use 'avc1' for H.264; fallback 'mp4v' if needed
+            out = cv2.VideoWriter(mp4_output_path, fourcc, fps, frame_size)
+
+            # Optional: Check if VideoWriter opened successfully
+            if not out.isOpened():
+                raise Exception("VideoWriter failed to open. Check codec and file path.")
 
             if not out.isOpened():
                 raise RuntimeError("❌ VideoWriter failed to open. Use XVID and .avi")
@@ -346,16 +353,16 @@ class VideoPreprocessor_FANET:
             if self.device == 'cuda':
                 torch.cuda.empty_cache()
 
-            mp4_output_path = avi_output_path.replace(".avi", ".mp4")
-            subprocess.run([
-                "ffmpeg", "-y",
-                "-i", avi_output_path,
-                "-vcodec", "libx264",
-                "-pix_fmt", "yuv420p",
-                mp4_output_path
-            ])
+            # mp4_output_path = avi_output_path.replace(".avi", ".mp4")
+            # subprocess.run([
+            #     "ffmpeg", "-y",
+            #     "-i", avi_output_path,
+            #     "-vcodec", "libx264",
+            #     "-pix_fmt", "yuv420p",
+            #     mp4_output_path
+            # ])
 
-            os.remove(avi_output_path)
+            # os.remove(avi_output_path)
             print(f"📸 Total frames written: {self.frames_written}")
 
             return output_video_path if self.frames_written > 0 else None
@@ -448,7 +455,7 @@ class VideoPreprocessor_FANET:
                 torch.cuda.empty_cache()
             print(f"🧹 Worker {rank} memory cleaned up.")
 
-    def parallel_main(self, video_paths, num_workers=8):
+    def parallel_main(self, video_paths, num_workers=4):
         print(f"⚙️ Launching GPU-parallel processing with {num_workers} workers")
 
         ctx = tmp.get_context("spawn")
