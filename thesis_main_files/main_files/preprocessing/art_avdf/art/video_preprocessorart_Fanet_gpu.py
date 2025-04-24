@@ -274,10 +274,7 @@ class VideoPreprocessor_FANET:
             out.release()
             del cap, out
 
-            conversion_cmd = (
-                f"ffmpeg -y -analyzeduration 100M -probesize 100M "
-                f"-i \"{avi_output_path}\" -pix_fmt yuv420p -vcodec libx264 \"{output_video_path}\""
-            )
+            conversion_cmd = f"ffmpeg -y -i \"{avi_output_path}\" -vcodec libx264 \"{output_video_path}\""
             print(f"📦 Converting AVI to MP4...")
             os.system(conversion_cmd)
             os.remove(avi_output_path)
@@ -290,22 +287,33 @@ class VideoPreprocessor_FANET:
 
     def _process_batch(self, rgb_batch, original_batch, out_writer):
         try:
-            landmarks_batch = self.fa.get_landmarks_from_batch(rgb_batch)
+            # Convert batch to torch tensor: shape (B, 3, H, W), float32, normalized to [0, 1]
+            batch_tensor = torch.stack([
+                torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
+                for img in rgb_batch
+            ]).to(self.device)
+
+            # Pass tensor to model
+            landmarks_batch = self.fa.get_landmarks_from_batch(batch_tensor)
+
         except Exception as e:
             print(f"⚠️ Batch landmark error: {str(e)}")
             return
 
         for orig_frame, landmarks in zip(original_batch, landmarks_batch or []):
-            if landmarks is None:
+            if landmarks is None or not isinstance(landmarks, list) or len(landmarks) == 0:
                 continue
             try:
-                # Since only one face, use landmarks[0]
-                single_face_landmarks = landmarks[0]  # ✅ This fixes the .size error
+                # Extract landmarks for the first detected face
+                single_face_landmarks = landmarks[0]
 
+                # Get lip crop from original frame
                 lip_segment, _ = self.extract_lip_segment(orig_frame, single_face_landmarks)
+
                 if not isinstance(lip_segment, np.ndarray) or lip_segment.size == 0:
                     continue
 
+                # Resize and convert to BGR (for correct MJPG/AVI output)
                 lip_resized = cv2.resize(lip_segment, (224, 224), interpolation=cv2.INTER_CUBIC)
                 lip_resized_bgr = cv2.cvtColor(lip_resized, cv2.COLOR_RGB2BGR)
                 out_writer.write(lip_resized_bgr)
