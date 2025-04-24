@@ -231,6 +231,8 @@ class VideoPreprocessor_FANET:
         os.makedirs(self.output_base_dir_real, exist_ok=True)
 
     def process_video(self, video_path):
+        self.frames_written = 0
+
         video_name = os.path.basename(video_path).split('.')[0]
         output_video_path = os.path.join(self.output_base_dir_real, f"{video_name}_lips_only.mp4")
 
@@ -282,6 +284,7 @@ class VideoPreprocessor_FANET:
             # print(f"📦 Converting AVI to MP4...")
             # os.system(conversion_cmd)
             # os.remove(avi_output_path)
+            print(f"📸 Total frames written: {self.frames_written}")
 
             return output_video_path
 
@@ -299,6 +302,7 @@ class VideoPreprocessor_FANET:
 
             # Pass tensor to model
             landmarks_batch = self.fa.get_landmarks_from_batch(batch_tensor)
+
             print(f"➡️ Landmarks detected: {len(landmarks_batch or [])}")
         except Exception as e:
             print(f"⚠️ Batch landmark error: {str(e)}")
@@ -313,6 +317,7 @@ class VideoPreprocessor_FANET:
 
                 # Get lip crop from original frame
                 lip_segment, _ = self.extract_lip_segment(orig_frame, single_face_landmarks)
+                print(f"Crop shape: {lip_segment.shape}")
 
                 if not isinstance(lip_segment, np.ndarray) or lip_segment.size == 0:
                     continue
@@ -320,8 +325,8 @@ class VideoPreprocessor_FANET:
                 # Resize and convert to BGR (for correct MJPG/AVI output)
                 lip_resized = cv2.resize(lip_segment, (224, 224), interpolation=cv2.INTER_CUBIC)
                 lip_resized_bgr = cv2.cvtColor(lip_resized, cv2.COLOR_RGB2BGR)
+                # Write to output
                 out_writer.write(lip_resized_bgr)
-
             except Exception as e:
                 print(f"⚠️ Lip extraction error: {str(e)}")
                 continue
