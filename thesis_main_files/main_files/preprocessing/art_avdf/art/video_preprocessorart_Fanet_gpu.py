@@ -282,6 +282,72 @@ class VideoPreprocessor_FANET:
             print(f"❌ Error processing {video_path}: {str(e)}")
             return None
 
+    def _process_batch(self, rgb_batch, original_batch, out_writer):
+        try:
+            batch_tensor = torch.stack([
+                torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
+                for img in rgb_batch
+            ]).to(self.device)
+
+            landmarks_batch = self.fa.get_landmarks_from_batch(batch_tensor)
+            print(f"➡️ Landmarks detected: {len(landmarks_batch or [])}")
+
+        except Exception as e:
+            print(f"⚠️ Batch landmark error: {str(e)}")
+            return
+
+        for orig_frame, landmarks in zip(original_batch, landmarks_batch or []):
+            if landmarks is None or not isinstance(landmarks, list) or len(landmarks) == 0:
+                continue
+
+            try:
+                single_face_landmarks = landmarks[0]
+                lip_segment, _ = self.extract_lip_segment(orig_frame, single_face_landmarks)
+
+                if not isinstance(lip_segment, np.ndarray) or lip_segment.size == 0:
+                    continue
+
+                lip_resized = cv2.resize(lip_segment, (224, 224), interpolation=cv2.INTER_CUBIC)
+                lip_resized_bgr = cv2.cvtColor(lip_resized, cv2.COLOR_RGB2BGR)
+                out_writer.write(lip_resized_bgr)
+
+                self.frames_written += 1  # ✅ Count successful frame writes
+                print(f"🖼️ Frame written. Total so far: {self.frames_written}")
+
+            except Exception as e:
+                print(f"⚠️ Lip extraction error: {str(e)}")
+                continue
+
+    def extract_lip_segment(self, frame, landmarks):
+        # Extract 68-point landmarks starting from mouth: points 48 to 67
+        lip_landmarks = landmarks[48:]
+
+        # Get x and y coordinates of the lips
+        x_coords = lip_landmarks[:, 0].astype(int)
+        y_coords = lip_landmarks[:, 1].astype(int)
+
+        # Compute tight bounding box
+        x_min, x_max = np.clip([x_coords.min(), x_coords.max()], 0, frame.shape[1] - 1)
+        y_min, y_max = np.clip([y_coords.min(), y_coords.max()], 0, frame.shape[0] - 1)
+
+        # Add optional padding (tweakable)
+        pad = 5
+        x_min = max(x_min - pad, 0)
+        x_max = min(x_max + pad, frame.shape[1] - 1)
+        y_min = max(y_min - pad, 0)
+        y_max = min(y_max + pad, frame.shape[0] - 1)
+
+        # Check if the crop box is valid
+        if x_max <= x_min or y_max <= y_min:
+            print(f"⚠️ Invalid lip crop: x({x_min}:{x_max}), y({y_min}:{y_max})")
+            return np.array([]), (x_min, y_min, x_max, y_max)
+
+        # Extract lip region from the original BGR frame
+        lip_crop = frame[y_min:y_max, x_min:x_max]
+        print(f"✅ Lip segment shape: {lip_crop.shape}")
+
+        return lip_crop, (x_min, y_min, x_max, y_max)
+
     def main_parallel(self, video_paths, max_workers=2):
         processed_paths = []
         print(f"🧵 Starting parallel video processing with {max_workers} workers...")
