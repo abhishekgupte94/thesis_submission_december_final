@@ -274,7 +274,10 @@ class VideoPreprocessor_FANET:
             out.release()
             del cap, out
 
-            conversion_cmd = f"ffmpeg -y -i \"{avi_output_path}\" -vcodec libx264 \"{output_video_path}\""
+            conversion_cmd = (
+                f"ffmpeg -y -analyzeduration 100M -probesize 100M "
+                f"-i \"{avi_output_path}\" -pix_fmt yuv420p -vcodec libx264 \"{output_video_path}\""
+            )
             print(f"📦 Converting AVI to MP4...")
             os.system(conversion_cmd)
             os.remove(avi_output_path)
@@ -304,7 +307,8 @@ class VideoPreprocessor_FANET:
                     continue
 
                 lip_resized = cv2.resize(lip_segment, (224, 224), interpolation=cv2.INTER_CUBIC)
-                out_writer.write(lip_resized)
+                lip_resized_bgr = cv2.cvtColor(lip_resized, cv2.COLOR_RGB2BGR)
+                out_writer.write(lip_resized_bgr)
 
             except Exception as e:
                 print(f"⚠️ Lip extraction error: {str(e)}")
