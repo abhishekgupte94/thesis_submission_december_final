@@ -4,13 +4,15 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 import argparse
 from thesis_main_files.models.art_avdf.art_main_module.art_model import ARTModule
-from thesis_main_files.models.data_loaders.data_loader_ART import VideoAudioDataset, VideoAudioFeatureProcessor, convert_paths, preprocess_videos_before_training
+from thesis_main_files.models.data_loaders.data_loader_ART import VideoAudioDataset, VideoAudioFeatureProcessor, convert_paths, preprocess_videos_before_training, get_project_root
 from thesis_main_files.models.art_avdf.training_pipeline.training_ART_Multi_GPU import TrainingPipeline
 
 def main():
     # 1) Argument parser
-    parser = argparse.ArgumentParser(description="DDP Training or Preprocessing")
-    parser.add_argument('--preprocess', action='store_true', help='Flag to only preprocess videos and exit')
+    parser = argparse.ArgumentParser(description="Train ART model or preprocess videos")
+    parser.add_argument('--preprocess', action='store_true', help='Only preprocess videos and exit')
+    parser.add_argument('--batch_size', type=int, default=32,
+                        help='Batch size per GPU or per video batch in preprocessing')
     args = parser.parse_args()
 
     # 2) Predefined project paths (already configured internally)
@@ -25,7 +27,7 @@ def main():
     os.makedirs("checkpoint/", exist_ok=True)
     os.makedirs("save_final_model/", exist_ok=True)
     csv_path, video_preprocess_dir, feature_dir_vid, video_dir, real_output_txt_path = convert_paths()
-    batch_size = 128
+    batch_size = 64
     if args.preprocess:
         preprocess_videos_before_training(
             csv_path=csv_path,
@@ -48,7 +50,7 @@ def main():
     # checkpoint_dir = "checkpoints/"  # TODO: Set this
     # 4) Load dataset
 
-    dataset = VideoAudioDataset()
+    dataset = VideoAudioDataset(get_project_root())
 
     # 5) Create feature processor
     # video_preprocess_dir = "path/to/swin_input_dir"  # TODO
@@ -75,7 +77,7 @@ def main():
         output_txt_path=real_output_txt_path,
         local_rank=local_rank
     )
-    # 7) Start training
+    # 7) Start trainingw
     trainer.train("checkpoints/")
     trainer.save_final_state("save_final_state/final_model.pt")
 

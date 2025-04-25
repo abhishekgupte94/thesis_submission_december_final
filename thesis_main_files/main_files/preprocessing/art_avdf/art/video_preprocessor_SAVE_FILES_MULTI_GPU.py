@@ -156,27 +156,3 @@ def worker_process(rank, chunks, batch_size, output_dir, return_dict):
     del processor
     gc.collect()
     torch.cuda.empty_cache()
-
-
-# if __name__ == "__main__":
-#     import pandas as pd
-#
-#     # 💬 Hardcoded CSV and column names
-#     csv_path = "path/to/your/file.csv"
-#     csv_column = "video_path_column"
-#     output_dir = "path/to/save/lips_only_videos"
-#     batch_size = 32
-#
-#     # 1. Read CSV
-#     df = pd.read_csv(csv_path)
-#     video_paths = df[csv_column].dropna().tolist()
-#
-#     # 2. Initialize processor
-#     preprocessor = VideoPreprocessor_FANET(
-#         batch_size=batch_size,
-#         output_base_dir=output_dir,
-#         device='cuda'
-#     )
-#
-#     # 3. Run
-#     preprocessor.parallel_main(video_paths)
