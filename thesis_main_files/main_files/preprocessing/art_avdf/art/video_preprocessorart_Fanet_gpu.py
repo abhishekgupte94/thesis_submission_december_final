@@ -463,7 +463,7 @@ class VideoPreprocessor_FANET:
         return_dict = manager.dict()
 
         chunks = [video_paths[i::num_workers] for i in range(num_workers)]
-        args = (self.batch_size, self.output_base_dir_real, None)
+        f = (self.batch_size, self.output_base_dir_real, None)
 
         processes = []
         for i, chunk in enumerate(chunks):
