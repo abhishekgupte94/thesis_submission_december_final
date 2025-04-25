@@ -83,14 +83,14 @@ class SWIN_EXECUTOR:
             os.remove(self.features_path)
             print(f"Deleted feature file: {self.features_path}")
             # Delete all .mp4 files in video_preprocess_dir
-            if self.video_preprocess_dir:
-                mp4_files = Path(self.video_preprocess_dir).glob("*.mp4")
-                for mp4_file in mp4_files:
-                    try:
-                        mp4_file.unlink()
-                        print(f"Deleted: {mp4_file}")
-                    except Exception as e:
-                        print(f"Failed to delete {mp4_file}: {e}")
+            # if self.video_preprocess_dir:
+            #     mp4_files = Path(self.video_preprocess_dir).glob("*.mp4")
+            #     for mp4_file in mp4_files:
+            #         try:
+            #             mp4_file.unlink()
+            #             print(f"Deleted: {mp4_file}")
+            #         except Exception as e:
+            #             print(f"Failed to delete {mp4_file}: {e}")
             return extracted_features
 
         except subprocess.CalledProcessError as e:

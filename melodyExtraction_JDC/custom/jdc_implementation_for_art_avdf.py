@@ -203,6 +203,3 @@ class JDCModel:
 
 # print("JDC Model loaded successfully and ready for use.")
 
-
-hd = JDCModel()
-print(hd.get_project_root())

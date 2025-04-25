@@ -67,7 +67,8 @@ class TrainingPipelineWrapper:
             learning_rate=learning_rate,
             num_epochs=num_epochs,
             device=device,
-            feature_processor=processor
+            feature_processor=processor,
+            output_txt_path=real_output_txt_path
         )
         # self.device = device
         self.evaluator = EvaluatorClass(device = device)

@@ -10,10 +10,11 @@ from thesis_main_files.models.art_avdf.art_main_module.art_model import ARTModul
 from thesis_main_files.models.art_avdf.learning_containers.self_supervised_learning import SelfSupervisedLearning
 from thesis_main_files.models.data_loaders.data_loader_ART import VideoAudioFeatureProcessor, VideoAudioDataset
 from thesis_main_files.main_files.evaluation.art.evaluator import EvaluatorClass
+from thesis_main_files.models.data_loaders.data_loader_ART import create_manifest_from_selected_files
 
 
 class TrainingPipeline:
-    def __init__(self, dataset, batch_size, learning_rate, num_epochs, device, feature_processor):
+    def __init__(self, dataset, batch_size, learning_rate, num_epochs, device, feature_processor, output_txt_path):
         self.model = ARTModule().to(device)
         self.dataset = dataset
         self.dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
@@ -25,7 +26,7 @@ class TrainingPipeline:
         self.evaluator = EvaluatorClass()
         log_dir = f"runs/ssl_single_gpu_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         self.writer = SummaryWriter(log_dir=log_dir)
-
+        self.output_txt_path = output_txt_path
     def train(self,checkpoint_dir):
         self.model.train()
         global_step = 0
@@ -35,7 +36,8 @@ class TrainingPipeline:
         for epoch in range(self.num_epochs):
             running_loss = 0.0
 
-            for video_paths, labels in self.dataloader:
+            for video_paths,audio_paths, labels in self.dataloader:
+                create_manifest_from_selected_files(video_paths, self.output_txt_path)
                 processed_audio_features, processed_video_features = self.feature_processor.create_datasubset(
                     csv_path=None,
                     use_preprocessed=False,
@@ -99,11 +101,3 @@ class TrainingPipeline:
         """
         self.evaluator.evaluate(model, audio_inputs, video_inputs, t_sne_save_path, retrieval_save_path)
         print("✅ Evaluation complete.")
-
-
-    # def save_final_model(self, model, save_path="final_trained_model.pt"):
-    #     """
-    #     Save the final trained model (for deployment or inference).
-    #     """
-    #     torch.save(model, save_path)
-    #     print(f"✅ Final trained model saved to: {save_path}")
