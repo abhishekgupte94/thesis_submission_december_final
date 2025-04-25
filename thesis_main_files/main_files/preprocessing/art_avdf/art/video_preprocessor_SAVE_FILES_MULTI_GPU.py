@@ -143,6 +143,8 @@ class VideoPreprocessor_FANET:
 
 # Worker process must be module-level for mp.spawn
 
+import time  # import at top
+
 def worker_process(rank, chunks, batch_size, output_dir, return_dict):
     torch.cuda.set_device(rank)
     device_str = f'cuda:{rank}'
@@ -151,8 +153,28 @@ def worker_process(rank, chunks, batch_size, output_dir, return_dict):
         output_base_dir=output_dir,
         device=device_str
     )
-    results = processor(chunks[rank])
-    return_dict[rank] = results
+
+    assigned_videos = chunks[rank]
+    num_videos = len(assigned_videos)
+
+    print(f"[GPU {rank}] Starting {num_videos} videos.")
+
+    start_time = time.time()
+    processed_videos = []
+
+    for idx, video_path in enumerate(assigned_videos):
+        output = processor.process_video(video_path)
+        if output:
+            processed_videos.append(output)
+
+        if (idx + 1) % 10 == 0 or (idx + 1) == num_videos:
+            elapsed = time.time() - start_time
+            avg_time_per_video = elapsed / (idx + 1)
+            eta_seconds = avg_time_per_video * (num_videos - idx - 1)
+            print(f"[GPU {rank}] {idx + 1}/{num_videos} videos done. ETA: {eta_seconds/60:.2f} minutes.")
+
+    return_dict[rank] = processed_videos
+
     del processor
     gc.collect()
     torch.cuda.empty_cache()
