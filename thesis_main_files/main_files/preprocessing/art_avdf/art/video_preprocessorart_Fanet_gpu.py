@@ -455,7 +455,7 @@ class VideoPreprocessor_FANET:
                 torch.cuda.empty_cache()
             print(f"🧹 Worker {rank} memory cleaned up.")
 
-    def parallel_main(self, video_paths, num_workers=8):
+    def parallel_main(self, video_paths, num_workers=6):
         print(f"⚙️ Launching GPU-parallel processing with {num_workers} workers")
 
         ctx = tmp.get_context("spawn")

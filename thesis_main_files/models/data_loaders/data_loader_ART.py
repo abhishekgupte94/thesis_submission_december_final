@@ -709,33 +709,3 @@ class VideoAudioDataset(Dataset):
 
         # Return video path and label
         return str(video_path), label
-# if __name__ == '__main__':
-#     project_root = get_project_root()
-#     csv_path, video_preprocess_dir, feature_dir_vid, video_dir, real_output_txt_path = convert_paths()
-#     video_paths, labels = create_file_paths(project_root,"training_data_two.csv")
-#     video_save_dir = "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/misc_files/save_path_2.pt"
-#
-#     af = VideoAudioFeatureExtractor()
-#     batch_size = 4
-#     from torch.utils.data import DataLoader
-#     dataset = VideoAudioDataset(project_root)
-#     dataloader = DataLoader(dataset, batch_size= batch_size, shuffle=False, num_workers=4, pin_memory=True)
-#     ap = AudioPreprocessor()
-#     # vfa.execute_swin(return_output = True)
-#     num = 0
-#     for video_paths, labels in dataloader:
-#         if num == 0:
-#             num+=1
-#             continue
-#         af.extract_audio_features(ap, video_paths, batch_size,save_path=video_save_dir)
-#         break
-
-# project_root = get_project_root()
-# csv_path, video_preprocess_dir, feature_dir_vid, video_dir, real_output_txt_path = convert_paths()
-# af = AudioPreprocessor()
-# # vfa = VideoFeatureExtractor(video_preprocess_dir = video_preprocess_dir)
-# #
-# # features = vfa.execute_swin(return_output = True)
-# # print(features.size())
-# # print(features)
-# prin
