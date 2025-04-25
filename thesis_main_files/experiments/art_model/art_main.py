@@ -18,7 +18,7 @@ def main():
 
     # Training configuration
     config = {
-        "batch_size": 128,
+        "batch_size": 64,
         "learning_rate": 1e-4,
         "num_epochs": 5,
         "device": device,
