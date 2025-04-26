@@ -1,4 +1,14 @@
+# Ensure the root of the project is in sys.path
 import os
+import sys
+# import os
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+
+
+# import os
 import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
