@@ -27,7 +27,7 @@ def main():
     os.makedirs("checkpoint/", exist_ok=True)
     os.makedirs("save_final_model/", exist_ok=True)
     csv_path, video_preprocess_dir, feature_dir_vid, video_dir, real_output_txt_path = convert_paths()
-    batch_size = 64
+    batch_size = 128
     if args.preprocess:
         preprocess_videos_before_training(
             csv_path=csv_path,
