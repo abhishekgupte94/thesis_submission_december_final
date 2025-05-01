@@ -2,7 +2,7 @@ import pandas as pd
 
 import pandas as pd
 import os
-file_path = "/datasets/processed/csv_files/lav_df/training_data/training_data_two.csv"
+file_path = "/datasets/processed/csv_files/lav_df/inference_data/training_data_two.csv"
 
 
 def save_filenames(csv_file, output_txt="filenames.txt", num_files=20):

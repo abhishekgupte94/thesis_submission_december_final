@@ -10,27 +10,11 @@ from torch.utils.tensorboard import SummaryWriter
 from thesis_main_files.models.art_avdf.art_main_module.art_model import ARTModule
 from thesis_main_files.models.art_avdf.learning_containers.self_supervised_learning import SelfSupervisedLearning
 from thesis_main_files.main_files.evaluation.art.evaluator import EvaluatorClass
+from thesis_main_files.utils.files_imp import create_manifest_from_selected_files
 # from thesis_main_files.models.data_loaders.data_loader_ART import create_manifest_from_selected_files
+# from pyJoules.energy_meter import EnergyMeter
+# from pyJoules.handler.csv_handler import CSVHandler
 
-def create_manifest_from_selected_files(selected_video_paths, output_txt_path):
-    """
-    Writes a text file for selected .mp4 videos with format:
-    filename.mp4 0
-
-    Args:
-        selected_video_paths (list of str or Path): List of selected video file paths.
-        output_txt_path (str or Path): Where to save the manifest text file.
-    """
-    from pathlib import Path
-
-    output_txt_path = Path(output_txt_path)
-
-    with output_txt_path.open("w") as f:
-        for video_path in selected_video_paths:
-            video_file = Path(video_path).name  # extract only the filename
-            f.write(f"{video_file} 0\n")
-
-    print(f"✅ Manifest created at: {output_txt_path} ({len(selected_video_paths)} entries)")
 
 class TrainingPipeline:
     def __init__(self, dataset, batch_size, learning_rate, num_epochs, device, feature_processor, output_txt_path, local_rank):
@@ -62,6 +46,13 @@ class TrainingPipeline:
 
         log_dir = f"runs/ssl_ddp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         self.writer = SummaryWriter(log_dir=log_dir)
+    def extract_features(self,video_paths):
+        processed_audio_features, processed_video_features = self.feature_processor.create_datasubset(
+            csv_path=None,
+            use_preprocessed=False,
+            video_paths=video_paths
+        )
+        return processed_audio_features, processed_video_features
 
     def train(self, checkpoint_dir):
         self.model.train()
@@ -76,18 +67,14 @@ class TrainingPipeline:
             for video_paths, audio_paths, labels in self.dataloader:
                 create_manifest_from_selected_files(video_paths, self.output_txt_path)
 
-                processed_audio_features, processed_video_features = self.feature_processor.create_datasubset(
-                    csv_path=None,
-                    use_preprocessed=False,
-                    video_paths=video_paths
-                )
+                processed_audio_features, processed_video_features = self.extract_features(video_paths)
 
                 if processed_audio_features is None or processed_video_features is None:
                     print("Skipping batch due to feature extraction failure.")
                     continue
 
                 self.optimizer.zero_grad()
-
+                # 🔋 Start energy measurement for training step
                 f_art, f_lip = self.model(
                     audio_features=processed_audio_features,
                     video_features=processed_video_features
@@ -124,7 +111,6 @@ class TrainingPipeline:
 
         if dist.get_rank() == 0:
             self.writer.close()
-
         print(f"Training completed on rank {dist.get_rank()}.")
 
     def save_state(self, model, optimizer, current_epoch, current_loss, save_path="checkpoint_trainer.pt"):
@@ -144,5 +130,13 @@ class TrainingPipeline:
             }, path)
             print(f"✅ Final model saved at: {path}")
     def start_evaluation(self, model, audio_inputs, video_inputs, similarity_matrix, t_sne_save_path=None, retrieval_save_path=None):
-        self.evaluator.evaluate(model, audio_inputs, video_inputs, t_sne_save_path, retrieval_save_path)
+        self.evaluator.evaluate_during_training(
+            model=self.model.module,
+            similarity_matrix=similarity_matrix,
+            audio_inputs=audio_inputs,
+            video_inputs=video_inputs,
+            t_sne_save_path=t_sne_save_path,
+            retrieval_save_path=retrieval_save_path
+        )
+
         print("✅ Evaluation complete.")

@@ -57,7 +57,7 @@ files_dir1 = get_video_files(dir1)
 durations1, stripped_durations1 = calculate_durations(files_dir1)
 
 # Load the CSV file
-csv_file = '/Users/abhishekgupte_macbookpro/PycharmProjects/thesis_main_files/datasets/processed/csv_files/lav_df/training_data/training_data_two.csv'  # Update this with your actual CSV file path
+csv_file = '/Users/abhishekgupte_macbookpro/PycharmProjects/thesis_main_files/datasets/processed/csv_files/lav_df/inference_data/training_data_two.csv'  # Update this with your actual CSV file path
 df = pd.read_csv(csv_file)
 
 # Filter CSV to only include rows where 'fake_periods' is not empty

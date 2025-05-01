@@ -25,7 +25,7 @@
 #     project_dir_curr = Path(project_dir_curr)
 #
 #     # Define paths to the relevant directories and CSV file
-#     csv_path = project_dir_curr / "datasets" / "processed" / "csv_files" / "dfdc" / "training_data" / csv_name
+#     csv_path = project_dir_curr / "datasets" / "processed" / "csv_files" / "dfdc" / "inference_data" / csv_name
 #     audio_dir = project_dir_curr / "datasets" / "processed" / "dfdc" / "audio_wav" / "train"
 #     video_dir = project_dir_curr / "datasets" / "processed" / "dfdc" / "train"
 #
@@ -75,7 +75,7 @@
 # def convert_paths():
 #     project_dir_curr = get_project_root()
 #     csv_path = str(
-#         project_dir_curr / "datasets" / "processed" / "csv_files" / "dfdc" / "training_data" / "training_data_two.csv")
+#         project_dir_curr / "datasets" / "processed" / "csv_files" / "dfdc" / "inference_data" / "training_data_two.csv")
 #     # Audio preprocess path
 #     audio_dir = str(project_dir_curr / "datasets" / "processed" / "dfdc" / "audio_wav" / "train")
 #     video_dir = str(project_dir_curr / "datasets" / "processed" / "dfdc" /  "train")
@@ -508,7 +508,7 @@ def create_file_paths(project_dir_curr, csv_name="training_data_dfdc.csv"):
     project_dir_curr = Path(project_dir_curr)
 
     # CSV and video directory paths
-    csv_path = project_dir_curr / "datasets" / "processed" / "csv_files" / "dfdc" / "training_data" / csv_name
+    csv_path = project_dir_curr / "datasets" / "processed" / "csv_files" / "dfdc" / "inference_data" / csv_name
     video_dir = project_dir_curr / "datasets" / "processed" / "dfdc" / "train"
 
     # Read CSV and extract file paths
@@ -563,7 +563,7 @@ def convert_paths():
     project_dir_curr = get_project_root()
 
     # Construct paths used in processing
-    csv_path = str(project_dir_curr / "datasets" / "processed" / "csv_files" / "dfdc" / "training_data" / "training_data_dfdc.csv")
+    csv_path = str(project_dir_curr / "datasets" / "processed" / "csv_files" / "dfdc" / "inference_data" / "training_data_dfdc.csv")
     video_dir = str(project_dir_curr / "datasets" / "processed" / "dfdc" / "train")
 
     # Swin Transformer project-specific paths

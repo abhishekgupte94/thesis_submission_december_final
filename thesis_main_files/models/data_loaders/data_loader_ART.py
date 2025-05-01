@@ -61,7 +61,7 @@ def create_file_paths(project_dir_curr, csv_name="training_data_two.csv"):
     project_dir_curr = Path(project_dir_curr)
 
     # CSV and video directory paths
-    csv_path = project_dir_curr / "datasets" / "processed" / "csv_files" / "lav_df" / "training_data" / csv_name
+    csv_path = project_dir_curr / "datasets" / "processed" / "csv_files" / "lav_df" / "inference_data" / csv_name
     csv_dir = project_dir_curr / "datasets" / "processed" /  "lav_df" / "train"
     df = pd.read_csv(csv_path)
     project_dir_curr = Path("Video-Swin-Transformer")
@@ -133,7 +133,7 @@ def convert_paths():
     project_dir_curr = get_project_root()
 
     # Construct paths used in processing
-    csv_path = str(project_dir_curr / "datasets" / "processed" / "csv_files" / "lav_df" / "training_data" / "training_data_two.csv")
+    csv_path = str(project_dir_curr / "datasets" / "processed" / "csv_files" / "lav_df" / "inference_data" / "training_data_two.csv")
     video_dir = str(project_dir_curr / "datasets" / "processed" / "lav_df" / "train")
 
     # Swin Transformer project-specific paths

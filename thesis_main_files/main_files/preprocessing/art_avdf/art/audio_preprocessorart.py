@@ -272,7 +272,7 @@ class AudioPreprocessor:
 # def convert_paths():
 #     project_dir_curr = get_project_root()
 #     csv_path = str(
-#         project_dir_curr / "datasets" / "processed" / "csv_files" / "lav_df" / "training_data" / "training_data_two.csv")
+#         project_dir_curr / "datasets" / "processed" / "csv_files" / "lav_df" / "inference_data" / "training_data_two.csv")
 #     # Audio preprocess path
 #     audio_dir = str(project_dir_curr / "datasets" / "processed" / "lav_df" / "audio_wav" / "train")
 #     video_dir = str(project_dir_curr / "datasets" / "processed" / "lav_df" /  "train")

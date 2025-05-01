@@ -143,7 +143,7 @@ class VideoPreprocessor_FANET:
 
 # Worker process must be module-level for mp.spawn
 
-import time  # import at top
+import time  # ensure this is imported at the top level
 
 def worker_process(rank, chunks, batch_size, output_dir, return_dict):
     torch.cuda.set_device(rank)
