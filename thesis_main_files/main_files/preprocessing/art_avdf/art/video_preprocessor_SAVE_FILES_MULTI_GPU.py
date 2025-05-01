@@ -6,6 +6,7 @@ import face_alignment
 import numpy as np
 import torch.multiprocessing as mp
 from pathlib import Path
+import time  # ensure this is imported at the top level
 
 class VideoPreprocessor_FANET:
     """
@@ -14,7 +15,7 @@ class VideoPreprocessor_FANET:
     """
     def __init__(
         self,
-        batch_size: int = 32,
+        batch_size: int ,
         output_base_dir: str = None,
         device: str = 'cuda'
     ):
@@ -143,7 +144,6 @@ class VideoPreprocessor_FANET:
 
 # Worker process must be module-level for mp.spawn
 
-import time  # ensure this is imported at the top level
 
 def worker_process(rank, chunks, batch_size, output_dir, return_dict):
     torch.cuda.set_device(rank)
