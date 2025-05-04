@@ -122,6 +122,49 @@ def get_project_root(project_name=None):
                 return parent
     return None
 
+def convert_paths_for_svm_train_preprocess():
+    """
+    Prepare all necessary paths for SVM training data processing and feature extraction.
+
+    Returns:
+        Tuple containing all path strings used for video preprocessing and feature extraction.
+    """
+    project_dir_curr = get_project_root()
+
+    # Paths for SVM training data
+    csv_path = str(project_dir_curr / "datasets" / "processed" / "csv_files" / "lav_df" / "inference_data" / "training_data_svm_final.csv")
+    video_dir = str(project_dir_curr / "datasets" / "processed" / "lav_df" / "checks" / "data_to_preprocess_for_svm")
+
+    # Swin Transformer project-specific paths (unchanged)
+    project_dir_video_swin = get_project_root("Video-Swin-Transformer")
+    video_preprocess_dir = str(project_dir_video_swin / "data" / "train" / "real")
+    real_output_txt_path = str(project_dir_video_swin / "data" / "train" / "real" / "lip_train_text_real.txt")
+    feature_dir_vid = str(project_dir_video_swin)
+
+    return csv_path, video_preprocess_dir, feature_dir_vid, video_dir, real_output_txt_path
+
+
+def convert_paths_for_svm_val_preprocess():
+    """
+    Prepare all necessary paths for SVM validation data processing and feature extraction.
+
+    Returns:
+        Tuple containing all path strings used for video preprocessing and feature extraction.
+    """
+    project_dir_curr = get_project_root()
+
+    # Paths for SVM validation data
+    csv_path = str(project_dir_curr / "datasets" / "processed" / "csv_files" / "lav_df" / "inference_data" / "val_data_for_svm.csv")
+    video_dir = str(project_dir_curr / "datasets" / "processed" / "lav_df" / "checks" / "data_to_preprocess_for_svm_val")
+
+    # Swin Transformer project-specific paths (unchanged)
+    project_dir_video_swin = get_project_root("Video-Swin-Transformer")
+    video_preprocess_dir = str(project_dir_video_swin / "data" / "train" / "real")
+    real_output_txt_path = str(project_dir_video_swin / "data" / "train" / "real" / "lip_train_text_real.txt")
+    feature_dir_vid = str(project_dir_video_swin)
+
+    return csv_path, video_preprocess_dir, feature_dir_vid, video_dir, real_output_txt_path
+
 def convert_paths():
     """
     Prepare all necessary paths for processing and feature extraction.

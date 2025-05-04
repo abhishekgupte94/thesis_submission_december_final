@@ -29,7 +29,18 @@ def main():
     os.makedirs("checkpoint/", exist_ok=True)
     os.makedirs("save_final_model/", exist_ok=True)
 
-    csv_path, video_preprocess_dir, feature_dir_vid, video_dir, real_output_txt_path = convert_paths(csv_filename=args.csv_file)
+    # 3) Select correct path function based on CSV
+    if args.csv_file == "training_data_two.csv":
+        csv_path, video_preprocess_dir, feature_dir_vid, video_dir, real_output_txt_path = convert_paths(csv_filename=args.csv_file)
+    elif args.csv_file == "training_data_svm_final.csv":
+        from thesis_main_files.models.data_loaders.data_loader_ART import convert_paths_for_svm_train_preprocess
+        csv_path, video_preprocess_dir, feature_dir_vid, video_dir, real_output_txt_path = convert_paths_for_svm_train_preprocess()
+    elif args.csv_file == "val_data_for_svm.csv":
+        from thesis_main_files.models.data_loaders.data_loader_ART import convert_paths_for_svm_val_preprocess
+        csv_path, video_preprocess_dir, feature_dir_vid, video_dir, real_output_txt_path = convert_paths_for_svm_val_preprocess()
+    else:
+        raise ValueError(f"Unsupported CSV file '{args.csv_file}'. Please use one of: training_data_two.csv, training_data_svm_final.csv, val_data_for_svm.csv.")
+
     batch_size = args.batch_size
 
     if args.preprocess:
@@ -54,7 +65,6 @@ def main():
     local_rank = int(os.environ['LOCAL_RANK'])
     torch.cuda.set_device(local_rank)
     dist.init_process_group(backend='nccl')
-
 
     # 4) Load dataset with custom CSV name
     dataset = VideoAudioDataset(get_project_root(), csv_name=args.csv_file)
