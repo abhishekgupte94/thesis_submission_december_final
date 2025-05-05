@@ -176,7 +176,7 @@ def convert_paths():
     project_dir_curr = get_project_root()
 
     # Construct paths used in processing
-    csv_path = str(project_dir_curr / "datasets" / "processed" / "csv_files" / "lav_df" / "inference_data" / "training_data_two.csv")
+    csv_path = str(project_dir_curr / "datasets" / "processed" / "csv_files" / "lav_df" / "training_data" / "training_data_two.csv")
     video_dir = str(project_dir_curr / "datasets" / "processed" / "lav_df" / "train")
 
     # Swin Transformer project-specific paths
