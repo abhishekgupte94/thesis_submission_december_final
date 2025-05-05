@@ -132,7 +132,7 @@ def convert_paths_for_svm_train_preprocess():
     project_dir_curr = get_project_root()
 
     # Paths for SVM training data
-    csv_path = str(project_dir_curr / "datasets" / "processed" / "csv_files" / "lav_df" / "inference_data" / "training_data_svm_final.csv")
+    csv_path = str(project_dir_curr / "datasets" / "processed" / "csv_files" / "lav_df" / "training_data" / "final_training_data_svm"/ "training_data_svm_final.csv")
     video_dir = str(project_dir_curr / "datasets" / "processed" / "lav_df" / "checks" / "data_to_preprocess_for_svm")
 
     # Swin Transformer project-specific paths (unchanged)
@@ -154,7 +154,7 @@ def convert_paths_for_svm_val_preprocess():
     project_dir_curr = get_project_root()
 
     # Paths for SVM validation data
-    csv_path = str(project_dir_curr / "datasets" / "processed" / "csv_files" / "lav_df" / "inference_data" / "val_data_for_svm.csv")
+    csv_path = str(project_dir_curr / "datasets" / "processed" / "csv_files" / "lav_df" / "training_data" / "val_data_for_svm.csv")
     video_dir = str(project_dir_curr / "datasets" / "processed" / "lav_df" / "checks" / "data_to_preprocess_for_svm_val")
 
     # Swin Transformer project-specific paths (unchanged)
