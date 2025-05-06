@@ -21,13 +21,15 @@ def preprocess_videos_before_training(csv_path, csv_column, output_dir, batch_si
         batch_size (int): Number of frames per batch for lip extraction.
     """
     import pandas as pd
-
+    project_dir_curr = get_project_root()
+    csv_name = Path(csv_path).name
+    _,video_paths,_ = create_file_paths(project_dir_curr,csv_name = csv_name)
     # Step 1: Read CSV
-    df = pd.read_csv(csv_path)
-    if csv_column not in df.columns:
-        raise ValueError(f"Column '{csv_column}' not found in {csv_path}")
-
-    video_paths = df[csv_column].tolist()
+    # df = pd.read_csv(csv_path)
+    # if csv_column not in df.columns:
+    #     raise ValueError(f"Column '{csv_column}' not found in {csv_path}")
+    #
+    # video_paths = df[csv_column].tolist()
 
     # Step 2: Initialize Preprocessor
     preproc = VideoPreprocessor_FANET(
@@ -61,7 +63,7 @@ def create_file_paths(project_dir_curr, csv_name="training_data_two.csv"):
     project_dir_curr = Path(project_dir_curr)
 
     # CSV and video directory paths
-    csv_path = project_dir_curr / "datasets" / "processed" / "csv_files" / "lav_df" / "inference_data" / csv_name
+    csv_path = project_dir_curr / "datasets" / "processed" / "csv_files" / "lav_df" / "training_data" / csv_name
     csv_dir = project_dir_curr / "datasets" / "processed" /  "lav_df" / "train"
     df = pd.read_csv(csv_path)
     project_dir_curr = Path("Video-Swin-Transformer")
