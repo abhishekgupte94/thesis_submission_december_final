@@ -52,6 +52,9 @@ class VideoPreprocessor_FANET:
         Reads a video, extracts lip regions in batches, writes a new video file of lip crops,
         and returns the output video path.
         """
+        if not os.path.exists(video_path):
+            print(f"❌ Video path does not exist: {video_path}")
+
         video_name = Path(video_path).stem
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
