@@ -28,6 +28,7 @@ def main():
     # 2) Project paths
     os.makedirs("checkpoint/", exist_ok=True)
     os.makedirs("save_final_model/", exist_ok=True)
+    os.makedirs("carbon_logs_preprocessing", exist_ok=True)
 
     # 3) Select correct path function based on CSV
     if args.csv_file == "training_data_two.csv":
