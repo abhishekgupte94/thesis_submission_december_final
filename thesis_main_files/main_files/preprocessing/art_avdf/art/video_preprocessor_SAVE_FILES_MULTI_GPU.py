@@ -94,6 +94,7 @@ class VideoPreprocessor_FANET:
         return out_path
 
     def _process_batch(self, frame_batch, out_writer):
+        import torch
         frame_batch_tensor = torch.stack(
             [torch.from_numpy(frame).permute(2, 0, 1) for frame in frame_batch],
             dim=0
@@ -101,11 +102,26 @@ class VideoPreprocessor_FANET:
 
         landmarks_batch = self.fa.get_landmarks_from_batch(frame_batch_tensor)
 
-        for frame, landmarks in zip(frame_batch, landmarks_batch):
+        for frame_tensor, landmarks in zip(frame_batch_tensor, landmarks_batch):
             try:
+                if landmarks is None:
+                    print(f"⚠️ Skipping frame due to no detected face.")
+                    continue
+
+                frame = frame_tensor.permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+
                 lip_crop, (x_min, y_min, x_max, y_max) = self.extract_lip_segment(frame, landmarks)
-                frame[y_min:y_max, x_min:x_max] = lip_crop
-                out_writer.write(frame)
+
+                if lip_crop is None:
+                    print(f"⚠️ Skipping frame due to invalid lip crop.")
+                    continue
+
+                # ✅ Resize the lip crop back to full frame size
+                resized_crop = cv2.resize(lip_crop, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_CUBIC)
+
+                # ✅ Write resized lip crop
+                out_writer.write(resized_crop)
+
             except Exception as e:
                 print(f"⚠️ Lip extraction error: {e}")
 
@@ -114,16 +130,23 @@ class VideoPreprocessor_FANET:
         torch.cuda.empty_cache()
 
     def extract_lip_segment(self, frame, landmarks):
-        """Extract lip region based on mouth landmarks"""
-        lip_landmarks = landmarks[48:]
+        """Extract lip region based on mouth landmarks."""
+        if landmarks is None:
+            return None, (0, 0, 0, 0)
+
+        lip_landmarks = landmarks[48:]  # Mouth landmarks (48 to 67)
+
         x_coords = lip_landmarks[:, 0].astype(int)
         y_coords = lip_landmarks[:, 1].astype(int)
+
         x_min, x_max = np.clip([x_coords.min(), x_coords.max()], 0, frame.shape[1] - 1)
         y_min, y_max = np.clip([y_coords.min(), y_coords.max()], 0, frame.shape[0] - 1)
-        if x_max <= x_min or y_max <= y_min:
-            # invalid crop, return original frame region
-            print("invalid crop!")
-            return frame[y_min:y_max, x_min:x_max], (x_min, y_min, x_max, y_max)
+
+        # 🚨 Check if bounding box is valid and not too small
+        if x_max <= x_min or y_max <= y_min or (x_max - x_min) < 10 or (y_max - y_min) < 10:
+            # Bad or tiny crop: return None
+            return None, (x_min, y_min, x_max, y_max)
+
         lip_crop = frame[y_min:y_max, x_min:x_max]
         return lip_crop, (x_min, y_min, x_max, y_max)
 
