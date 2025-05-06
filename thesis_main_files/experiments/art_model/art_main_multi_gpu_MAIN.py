@@ -31,7 +31,7 @@ def main():
 
     # 3) Select correct path function based on CSV
     if args.csv_file == "training_data_two.csv":
-        csv_path, video_preprocess_dir, feature_dir_vid, video_dir, real_output_txt_path = convert_paths(csv_filename=args.csv_file)
+        csv_path, video_preprocess_dir, feature_dir_vid, video_dir, real_output_txt_path = convert_paths()
     elif args.csv_file == "training_data_svm_final.csv":
         from thesis_main_files.models.data_loaders.data_loader_ART import convert_paths_for_svm_train_preprocess
         csv_path, video_preprocess_dir, feature_dir_vid, video_dir, real_output_txt_path = convert_paths_for_svm_train_preprocess()
