@@ -101,10 +101,8 @@ class VideoPreprocessor_FANET:
 
         landmarks_batch = self.fa.get_landmarks_from_batch(frame_batch_tensor)
 
-        for frame_tensor, landmarks in zip(frame_batch_tensor, landmarks_batch):
+        for frame, landmarks in zip(frame_batch, landmarks_batch):
             try:
-                frame = frame_tensor.permute(1, 2, 0).cpu().numpy().astype(np.uint8)  # 👈 convert back to BGR np.array
-
                 lip_crop, (x_min, y_min, x_max, y_max) = self.extract_lip_segment(frame, landmarks)
                 frame[y_min:y_max, x_min:x_max] = lip_crop
                 out_writer.write(frame)
@@ -124,6 +122,7 @@ class VideoPreprocessor_FANET:
         y_min, y_max = np.clip([y_coords.min(), y_coords.max()], 0, frame.shape[0] - 1)
         if x_max <= x_min or y_max <= y_min:
             # invalid crop, return original frame region
+            print("invalid crop!")
             return frame[y_min:y_max, x_min:x_max], (x_min, y_min, x_max, y_max)
         lip_crop = frame[y_min:y_max, x_min:x_max]
         return lip_crop, (x_min, y_min, x_max, y_max)
