@@ -94,10 +94,13 @@ class VideoPreprocessor_FANET:
         return out_path
 
     def _process_batch(self, frame_batch, out_writer):
-        """
-        Given a list of BGR frames, extracts lip crops and writes each to out_writer.
-        """
-        landmarks_batch = self.fa.get_landmarks_from_batch(frame_batch)
+        frame_batch_tensor = torch.stack(
+            [torch.from_numpy(frame).permute(2, 0, 1) for frame in frame_batch],
+            dim=0
+        ).float().to(self.device)
+
+        landmarks_batch = self.fa.get_landmarks_from_batch(frame_batch_tensor)
+
         for frame, landmarks in zip(frame_batch, landmarks_batch):
             try:
                 lip_crop, (x_min, y_min, x_max, y_max) = self.extract_lip_segment(frame, landmarks)
@@ -105,7 +108,8 @@ class VideoPreprocessor_FANET:
                 out_writer.write(frame)
             except Exception as e:
                 print(f"⚠️ Lip extraction error: {e}")
-        del frame_batch, landmarks_batch
+
+        del frame_batch, frame_batch_tensor, landmarks_batch
         gc.collect()
         torch.cuda.empty_cache()
 
