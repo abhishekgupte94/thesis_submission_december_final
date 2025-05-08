@@ -60,7 +60,7 @@ class VideoPreprocessor_FANET:
                                 f"{video_name}_lips_only.mp4")  # 🔥 CHANGE HERE: output to common dir
 
         # 🔥 CHANGE HERE: Use ffmpegcv VideoWriter instead of OpenCV
-        out = ffmpegcv.VideoWriter(out_path, fps=fps, width=frame_size[0], height=frame_size[1])
+        out = ffmpegcv.VideoWriter(out_path, fps=fps, shape=(height, width, 3))
 
         print(f"[INFO] [GPU {self.rank}] Saving output to {out_path}")
 
