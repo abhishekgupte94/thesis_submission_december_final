@@ -14,7 +14,6 @@ import torch
 # from mmcv.runner import get_dist_info, init_dist, load_checkpoint
 # from mmcv.runner.fp16_utils import wrap_fp16_model
 from mmengine import Config
-from mmengine.model import fuse_conv_bn
 from mmengine.fileio import FileClient
 from mmengine.model import MMDataParallel, MMDistributedDataParallel
 from mmengine.dist import get_dist_info, init_dist
