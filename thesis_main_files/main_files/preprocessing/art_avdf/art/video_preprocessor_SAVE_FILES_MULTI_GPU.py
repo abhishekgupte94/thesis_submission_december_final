@@ -61,11 +61,9 @@ class VideoPreprocessor_FANET:
         # 🔥 CHANGE HERE: Correct ffmpegcv usage with codec, fps, width, height
         out = ffmpegcv.VideoWriter(
             out_path,
-            codec='mp4v',  # 🔥 Set codec manually
-            fps=fps,
-            width=width,
-            height=height
-        )
+            codec = 'mp4v',  # 🔥 Set codec manually
+            fps = fps,
+            (width,height))
 
         print(f"[INFO] [GPU {self.rank}] Saving output to {out_path}")
 
