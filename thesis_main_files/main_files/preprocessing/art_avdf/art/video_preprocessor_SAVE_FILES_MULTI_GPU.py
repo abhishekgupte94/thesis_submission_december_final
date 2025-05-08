@@ -7,7 +7,7 @@ import numpy as np
 import torch.multiprocessing as mp
 from pathlib import Path
 import time
-import ffmpegcv  # 🔥 CHANGE HERE: Import ffmpegcv properly
+import ffmpegcv
 
 
 class VideoPreprocessor_FANET:
@@ -54,17 +54,21 @@ class VideoPreprocessor_FANET:
         fps = cap.get(cv2.CAP_PROP_FPS)
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        frame_size = (width, height)
 
         out_path = os.path.join(self.output_base_dir, f"{video_name}_lips_only.mp4")
 
-        # 🔥 CHANGE HERE: Correct ffmpegcv usage with codec, fps, width, height
-        out = ffmpegcv.VideoWriter(
-            out_path,
-            'libx264',  # 🔥 explicit codec
-            fps,
-            (width, height)
-        )
+        try:
+            out = ffmpegcv.VideoWriter(
+                out_path,
+                'libx264',  # or 'h264_nvenc' if you want faster GPU encoding
+                fps,
+                (224, 224),   # Set to lip crop size
+                loglevel="error"
+            )
+        except Exception as e:
+            print(f"❌ Failed to create ffmpegcv writer: {e}")
+            cap.release()
+            return None
 
         print(f"[INFO] [GPU {self.rank}] Saving output to {out_path}")
 
@@ -75,7 +79,9 @@ class VideoPreprocessor_FANET:
                 break
             buffer.append(frame)
             if len(buffer) >= self.batch_size:
-                self._process_batch(buffer, out)
+                success = self._process_batch(buffer, out)
+                if not success:
+                    break
                 buffer.clear()
 
         if buffer:
@@ -83,6 +89,12 @@ class VideoPreprocessor_FANET:
 
         cap.release()
         out.release()
+
+        # Log final video size
+        if os.path.exists(out_path):
+            size_mb = os.path.getsize(out_path) / (1024 * 1024)
+            print(f"[GPU {self.rank}] Saved {out_path} ({size_mb:.2f} MB)")
+
         del cap, out, buffer
         gc.collect()
         torch.cuda.empty_cache()
@@ -90,36 +102,54 @@ class VideoPreprocessor_FANET:
         return out_path
 
     def _process_batch(self, frame_batch, out_writer):
-        frame_batch_tensor = torch.stack(
-            [torch.from_numpy(frame).permute(2, 0, 1) for frame in frame_batch],
-            dim=0
-        ).float().to(self.device)
+        try:
+            frame_batch_tensor = torch.stack(
+                [torch.from_numpy(frame).permute(2, 0, 1) for frame in frame_batch],
+                dim=0
+            ).float().to(self.device)
 
-        landmarks_batch = self.fa.get_landmarks_from_batch(frame_batch_tensor)
+            landmarks_batch = self.fa.get_landmarks_from_batch(frame_batch_tensor)
 
-        for frame_tensor, landmarks in zip(frame_batch_tensor, landmarks_batch):
-            try:
-                if landmarks is None:
-                    print(f"⚠️ Skipping frame due to no detected face.")
-                    continue
+            for frame_tensor, landmarks in zip(frame_batch_tensor, landmarks_batch):
+                try:
+                    if landmarks is None:
+                        print(f"⚠️ Skipping frame: no face detected.")
+                        continue
 
-                frame = frame_tensor.permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+                    frame = frame_tensor.permute(1, 2, 0).cpu().numpy().astype(np.uint8)
 
-                lip_crop, (x_min, y_min, x_max, y_max) = self.extract_lip_segment(frame, landmarks)
+                    lip_crop, (x_min, y_min, x_max, y_max) = self.extract_lip_segment(frame, landmarks)
 
-                if lip_crop is None:
-                    print(f"⚠️ Skipping frame due to invalid lip crop.")
-                    continue
+                    if lip_crop is None:
+                        print(f"⚠️ Skipping frame: invalid lip crop.")
+                        continue
 
-                resized_crop = cv2.resize(lip_crop, (224, 224), interpolation=cv2.INTER_CUBIC)
-                out_writer.write(resized_crop)
+                    resized_crop = cv2.resize(lip_crop, (224, 224), interpolation=cv2.INTER_CUBIC)
 
-            except Exception as e:
-                print(f"⚠️ Lip extraction error: {e}")
+                    # Validate frame shape
+                    if not isinstance(resized_crop, np.ndarray) or resized_crop.ndim != 3 or resized_crop.dtype != np.uint8:
+                        print(f"⚠️ Invalid frame for writing. Skipping.")
+                        continue
 
-        del frame_batch, frame_batch_tensor, landmarks_batch
-        gc.collect()
-        torch.cuda.empty_cache()
+                    out_writer.write(resized_crop)
+
+                except (BrokenPipeError, OSError) as e:
+                    print(f"❌ Broken pipe detected while writing frame: {e}")
+                    return False  # End batch early if writer crashes
+
+                except Exception as e:
+                    print(f"⚠️ Error during frame processing: {e}")
+
+            return True
+
+        except Exception as e:
+            print(f"❌ Batch processing failed: {e}")
+            return False
+
+        finally:
+            del frame_batch, frame_batch_tensor, landmarks_batch
+            gc.collect()
+            torch.cuda.empty_cache()
 
     def extract_lip_segment(self, frame, landmarks):
         if landmarks is None:
@@ -144,6 +174,7 @@ class VideoPreprocessor_FANET:
         manager = mp.Manager()
         return_dict = manager.dict()
         chunks = [video_paths[i::world_size] for i in range(world_size)]
+
         mp.spawn(
             worker_process,
             args=(chunks, self.batch_size, self.output_base_dir, return_dict),
@@ -158,8 +189,6 @@ class VideoPreprocessor_FANET:
         print(f"✅ Extracted {len(all_outputs)} lip-only videos to '{self.output_base_dir}'.")
         return all_outputs
 
-
-# Worker process
 
 def worker_process(rank, chunks, batch_size, output_dir, return_dict):
     torch.cuda.set_device(rank)
@@ -181,9 +210,12 @@ def worker_process(rank, chunks, batch_size, output_dir, return_dict):
     processed_videos = []
 
     for idx, video_path in enumerate(assigned_videos):
-        output = processor.process_video(video_path)
-        if output:
-            processed_videos.append(output)
+        try:
+            output = processor.process_video(video_path)
+            if output:
+                processed_videos.append(output)
+        except Exception as e:
+            print(f"⚠️ [GPU {rank}] Error processing {video_path}: {e}")
 
         if (idx + 1) % 10 == 0 or (idx + 1) == num_videos:
             elapsed = time.time() - start_time
