@@ -87,6 +87,33 @@ def create_file_paths(project_dir_curr, csv_name="training_data_two.csv"):
 
     return lips_only_paths, original_paths, labels
 
+def create_file_paths_for_inference_eval(project_dir_curr, csv_name="sampled_combined_data.csv"):
+    """
+    Generates full paths for video files based on filenames from a CSV file
+    for inference evaluation (no lips-only versions).
+
+    Args:
+        project_dir_curr (Path or str): Base project directory.
+        csv_name (str): Name of CSV file with file listings and labels.
+
+    Returns:
+        tuple: original_paths, labels
+    """
+    project_dir_curr = Path(project_dir_curr)
+
+    # CSV and video directory paths
+    csv_path = project_dir_curr / "datasets" / "processed" / "csv_files" / "dfdc" / "inference_data" / csv_name
+    video_dir = project_dir_curr / "datasets" / "processed" / "dfdc" / "eval"
+    df = pd.read_csv(csv_path)
+
+    original_paths = []
+    for filename in df['filename']:
+        full_original_path = video_dir / filename
+        original_paths.append(full_original_path)
+
+    labels = df['label'].tolist()
+
+    return original_paths, labels
 
 def get_project_root(project_name=None):
     """
@@ -158,6 +185,26 @@ def convert_paths_for_svm_val_preprocess():
     # Paths for SVM validation data
     csv_path = str(project_dir_curr / "datasets" / "processed" / "csv_files" / "lav_df" / "training_data" / "val_data_for_svm.csv")
     video_dir = str(project_dir_curr / "datasets" / "processed" / "lav_df" / "checks" / "data_to_preprocess_for_svm_val")
+
+    # Swin Transformer project-specific paths (unchanged)
+    project_dir_video_swin = get_project_root("Video-Swin-Transformer")
+    video_preprocess_dir = str(project_dir_video_swin / "data" / "train" / "real")
+    real_output_txt_path = str(project_dir_video_swin / "data" / "train" / "real" / "lip_train_text_real.txt")
+    feature_dir_vid = str(project_dir_video_swin)
+
+    return csv_path, video_preprocess_dir, feature_dir_vid, video_dir, real_output_txt_path
+def convert_paths_for_inference_ssl_dfdc():
+    """
+    Prepare all necessary paths for Inference Evaluation preprocessing and feature extraction.
+
+    Returns:
+        Tuple containing all path strings used for video preprocessing and feature extraction.
+    """
+    project_dir_curr = get_project_root()
+
+    # Paths for Inference Evaluation Data
+    csv_path = str(project_dir_curr / "datasets" / "processed" / "csv_files" / "dfdc" / "inference_data" / "sampled_combined_data.csv")
+    video_dir = str(project_dir_curr / "datasets" / "processed" / "dfdc" / "eval")  # <-- Assuming videos are here. Adjust if needed.
 
     # Swin Transformer project-specific paths (unchanged)
     project_dir_video_swin = get_project_root("Video-Swin-Transformer")
@@ -323,6 +370,36 @@ class VideoAudioDataset(Dataset):
 
         # Return video path and label
         return str(video_path),str(audio_path), label
+
+class VideoAudioDatasetEval(Dataset):
+    """
+    Custom PyTorch Dataset for loading video paths and labels for inference evaluation.
+    """
+    def __init__(self, project_dir_curr, csv_name="sampled_combined_data.csv", augmentations=None):
+        self.project_dir_curr = project_dir_curr
+        self.csv_name = csv_name
+        self.augmentations = augmentations
+
+        # Load paths and labels directly
+        self.video_paths, self.labels = create_file_paths_for_inference_eval(project_dir_curr, csv_name)
+
+        # Store data as list of tuples (video_path, label)
+        self.data = list(zip(self.video_paths, self.labels))
+
+    def __len__(self):
+        # Return total number of samples
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        # Get one sample from dataset
+        video_path, label = self.data[idx]
+
+        # Apply optional augmentations
+        if self.augmentations:
+            video_path = self.augmentations(video_path)
+
+        # Return video path and label
+        return str(video_path), label
 
 # if __name__ == '__main__':
 #     project_root = get_project_root()
