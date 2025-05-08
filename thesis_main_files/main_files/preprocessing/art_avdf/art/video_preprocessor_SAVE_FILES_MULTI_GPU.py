@@ -111,7 +111,7 @@ class VideoPreprocessor_FANET:
                     print(f"⚠️ Skipping frame due to invalid lip crop.")
                     continue
 
-                resized_crop = cv2.resize(lip_crop, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_CUBIC)
+                resized_crop = cv2.resize(lip_crop, (224, 224), interpolation=cv2.INTER_CUBIC)
                 out_writer.write(resized_crop)
 
             except Exception as e:
