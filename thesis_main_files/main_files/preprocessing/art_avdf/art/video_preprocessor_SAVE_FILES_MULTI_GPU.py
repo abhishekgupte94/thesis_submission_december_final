@@ -7,7 +7,7 @@ import numpy as np
 import torch.multiprocessing as mp
 from pathlib import Path
 import time
-import ffmpegcv  # 🔥 CHANGE HERE: Added ffmpegcv import
+import ffmpegcv  # 🔥 CHANGE HERE: Import ffmpegcv properly
 
 
 class VideoPreprocessor_FANET:
@@ -19,7 +19,7 @@ class VideoPreprocessor_FANET:
         self.batch_size = batch_size
         self.output_base_dir = output_base_dir
         self.device = device
-        self.rank = rank  # rank still useful for GPU assignment
+        self.rank = rank
 
         os.makedirs(self.output_base_dir, exist_ok=True)
 
@@ -56,11 +56,16 @@ class VideoPreprocessor_FANET:
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         frame_size = (width, height)
 
-        out_path = os.path.join(self.output_base_dir,
-                                f"{video_name}_lips_only.mp4")  # 🔥 CHANGE HERE: output to common dir
+        out_path = os.path.join(self.output_base_dir, f"{video_name}_lips_only.mp4")
 
-        # 🔥 CHANGE HERE: Use ffmpegcv VideoWriter instead of OpenCV
-        out = ffmpegcv.VideoWriter(out_path, codec='mp4v', fps=fps, width=width, height=height)
+        # 🔥 CHANGE HERE: Correct ffmpegcv usage with codec, fps, width, height
+        out = ffmpegcv.VideoWriter(
+            out_path,
+            codec='mp4v',  # 🔥 Set codec manually
+            fps=fps,
+            width=width,
+            height=height
+        )
 
         print(f"[INFO] [GPU {self.rank}] Saving output to {out_path}")
 
@@ -155,7 +160,7 @@ class VideoPreprocessor_FANET:
         return all_outputs
 
 
-# Worker process function
+# Worker process
 
 def worker_process(rank, chunks, batch_size, output_dir, return_dict):
     torch.cuda.set_device(rank)
@@ -165,7 +170,7 @@ def worker_process(rank, chunks, batch_size, output_dir, return_dict):
         batch_size=batch_size,
         output_base_dir=output_dir,
         device=device_str,
-        rank=rank  # still needed for GPU assignment and prints
+        rank=rank
     )
 
     assigned_videos = chunks[rank]
