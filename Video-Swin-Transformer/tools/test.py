@@ -15,7 +15,7 @@ import torch
 # from mmcv.runner.fp16_utils import wrap_fp16_model
 from mmengine import Config, DictAction
 from mmengine.fileio import FileClient
-from mmcv.parallel.data_parallel import MMDataParallel
+# from mmcv.parallel.data_parallel import MMDataParallel
 from mmengine.model import  MMDistributedDataParallel
 from mmengine.dist import get_dist_info, init_dist
 from mmengine.runner.checkpoint import load_checkpoint
