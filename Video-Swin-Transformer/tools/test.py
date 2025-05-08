@@ -5,7 +5,9 @@ import warnings
 
 import mmcv
 import torch
-from mmcv import Config, DictAction
+# from mmcv import Config, DictAction
+from mmengine import Config, DictAction
+
 from mmcv.cnn import fuse_conv_bn
 from mmcv.fileio.io import file_handlers
 from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
