@@ -87,7 +87,7 @@ def create_file_paths(project_dir_curr, csv_name="training_data_two.csv"):
 
     return lips_only_paths, original_paths, labels
 
-def create_file_paths_for_inference_eval(project_dir_curr, csv_name="sampled_combined_data.csv"):
+def create_file_paths_for_inference_ssl(project_dir_curr, csv_name="sampled_combined_data.csv"):
     """
     Generates full paths for video files based on filenames from a CSV file
     for inference evaluation (no lips-only versions).

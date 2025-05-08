@@ -115,10 +115,66 @@ class SWIN_EXECUTOR:
             return features_out
 
         return 0
+def get_project_root(project_name=None):
+    """
+    Locate the root directory of the project based on script path.
+
+    Args:
+        project_name (str, optional): Specific project name to locate.
+
+    Returns:
+        Path or None: Root directory if found, else None.
+    """
+    import os
+    current = Path(os.getcwd()).resolve()
+
+    # Look for the known parent folder
+    for parent in current.parents:
+        if parent.name == "thesis_main_files":
+            base_dir = parent.parent
+            break
+    else:
+        return None
+
+    if project_name:
+        # Return the matching subdirectory if it exists
+        target_path = base_dir / project_name
+        if target_path.exists() and target_path.is_dir():
+            return target_path
+        else:
+            return None
+    else:
+        # Fallback search for common project directories
+        project_names = {"thesis_main_files", "Video-Swin-Transformer", "melodyExtraction_JDC"}
+        for parent in current.parents:
+            if parent.name in project_names:
+                return parent
+    return None
+
+def convert_paths():
+    """
+    Prepare all necessary paths for processing and feature extraction.
+
+    Returns:
+        Tuple containing all path strings used for video preprocessing and feature extraction.
+    """
+    # project_dir_curr = Path("/content/project_combined_repo_clean/thesis_main_files")
+    project_dir_curr = get_project_root()
+
+    # Construct paths used in processing
+    csv_path = str(project_dir_curr / "datasets" / "processed" / "csv_files" / "lav_df" / "training_data" / "training_data_two.csv")
+    video_dir = str(project_dir_curr / "datasets" / "processed" / "lav_df" / "train")
+
+    # Swin Transformer project-specific paths
+    project_dir_video_swin = get_project_root("Video-Swin-Transformer")
+    video_preprocess_dir = str(project_dir_video_swin / "data" / "train" / "real")
+    real_output_txt_path = str(project_dir_video_swin / "data" / "train" / "real" / "lip_train_text_real.txt")
+    feature_dir_vid = str(project_dir_video_swin)
+
+    return csv_path, video_preprocess_dir, feature_dir_vid, video_dir, real_output_txt_path
 
 
-
-from thesis_main_files.models.data_loaders.data_loader_ART import convert_paths,get_project_root
+# from thesis_main_files.models.data_loaders.data_loader_ART import convert_paths,get_project_root
 import time
 st = time.time()
 csv_path, video_preprocess_dir, feature_dir_vid, video_dir, real_output_txt_path = convert_paths()
