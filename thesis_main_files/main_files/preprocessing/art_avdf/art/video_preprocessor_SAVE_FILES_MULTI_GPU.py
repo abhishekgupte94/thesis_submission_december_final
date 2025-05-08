@@ -62,8 +62,8 @@ class VideoPreprocessor_FANET:
                 out_path,
                 'libx264',  # or 'h264_nvenc' if you want faster GPU encoding
                 fps,
-                (224, 224),   # Set to lip crop size
-                loglevel="error"
+                (224, 224) # Set to lip crop size
+                # loglevel="error"
             )
         except Exception as e:
             print(f"❌ Failed to create ffmpegcv writer: {e}")
