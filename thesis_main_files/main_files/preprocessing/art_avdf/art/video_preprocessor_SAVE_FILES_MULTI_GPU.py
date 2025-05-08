@@ -67,7 +67,7 @@ class VideoPreprocessor_FANET:
         frame_size = (width, height)
 
         out_path = os.path.join(self.output_base_dir, f"{video_name}_lips_only.mp4")
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        fourcc = cv2.VideoWriter_fourcc(*'H264')
         out = cv2.VideoWriter(out_path, fourcc, fps, frame_size)
         if not out.isOpened():
             raise Exception("❌ VideoWriter failed to open. Check codec and file path.")
