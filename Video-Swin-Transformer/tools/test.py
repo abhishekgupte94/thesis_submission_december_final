@@ -164,12 +164,12 @@ def inference_pytorch(args, cfg, distributed, data_loader):
         register_module_hooks(model, cfg.module_hooks)
 
     fp16_cfg = cfg.get('fp16', None)
-    if fp16_cfg is not None:
-        wrap_fp16_model(model)
+    # if fp16_cfg is not None:
+        # wrap_fp16_model(model)
     load_checkpoint(model, args.checkpoint, map_location='cpu')
 
-    if args.fuse_conv_bn:
-        model = fuse_conv_bn(model)
+    # if args.fuse_conv_bn:
+        # model = fuse_conv_bn(model)
 
     if not distributed:
         model = MMDataParallel(model, device_ids=[0])
