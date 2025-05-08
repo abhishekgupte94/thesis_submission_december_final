@@ -61,7 +61,7 @@ class VideoPreprocessor_FANET:
         # 🔥 CHANGE HERE: Correct ffmpegcv usage with codec, fps, width, height
         out = ffmpegcv.VideoWriter(
             out_path,
-            'libx264',  # or 'mp4v', but 'libx264' recommended
+            None,  # or 'mp4v', but 'libx264' recommended
             fps,
             (width, height)
         )
