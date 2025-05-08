@@ -67,21 +67,11 @@ class VideoPreprocessor_FANET:
         frame_size = (width, height)
 
         out_path = os.path.join(self.output_base_dir, f"{video_name}_lips_only.mp4")
-        fourcc = cv2.VideoWriter_fourcc(*'H264')
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(out_path, fourcc, fps, frame_size)
 
         if not out.isOpened():
-            print("[WARN] H264 codec not available. Trying avc1...")
-            fourcc = cv2.VideoWriter_fourcc(*'avc1')
-            out = cv2.VideoWriter(out_path, fourcc, fps, frame_size)
-
-            if not out.isOpened():
-                print("[WARN] avc1 codec also failed. Trying mp4v...")
-                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                out = cv2.VideoWriter(out_path, fourcc, fps, frame_size)
-
-                if not out.isOpened():
-                    raise Exception("❌ All codecs failed: H264, avc1, and mp4v.")
+            raise Exception("❌ VideoWriter failed to open even with mp4v codec!")
 
         print(f"[INFO] Saving output to {out_path}")
 
