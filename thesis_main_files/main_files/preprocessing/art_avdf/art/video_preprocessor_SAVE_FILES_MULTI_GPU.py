@@ -6,26 +6,26 @@ import face_alignment
 import numpy as np
 import torch.multiprocessing as mp
 from pathlib import Path
-import time  # ensure this is imported at the top level
+import time
+
 
 class VideoPreprocessor_FANET:
     """
     Distributed video lip-extraction using FaceAlignment and OpenCV.
-    Saves lip-only videos to a common output directory across all GPUs.
+    Saves lip-only videos to a unique output directory per GPU.
     """
-    def __init__(
-        self,
-        batch_size: int ,
-        output_base_dir: str = None,
-        device: str = 'cuda'
-    ):
+
+    def __init__(self, batch_size: int, output_base_dir: str = None, device: str = 'cuda',
+                 rank: int = 0):  # 🔥 CHANGE HERE: added 'rank'
         self.batch_size = batch_size
         self.output_base_dir = output_base_dir
         self.device = device
+        self.rank = rank  # 🔥 CHANGE HERE: save rank inside the object
 
-        os.makedirs(self.output_base_dir, exist_ok=True)
+        # 🔥 CHANGE HERE: create a subfolder per GPU
+        self.output_subdir = os.path.join(self.output_base_dir, f"gpu_{self.rank}")
+        os.makedirs(self.output_subdir, exist_ok=True)
 
-        # Initialize FaceAlignment once per worker
         self.fa = face_alignment.FaceAlignment(
             face_alignment.LandmarksType.TWO_D,
             device=self.device,
@@ -36,10 +36,6 @@ class VideoPreprocessor_FANET:
         torch.backends.cudnn.benchmark = True
 
     def __call__(self, video_paths: list[str]) -> list[str]:
-        """
-        Process a list of video paths sequentially in this process,
-        returning the list of lip-only output paths.
-        """
         processed = []
         for path in video_paths:
             out = self.process_video(path)
@@ -48,12 +44,9 @@ class VideoPreprocessor_FANET:
         return processed
 
     def process_video(self, video_path: str) -> str:
-        """
-        Reads a video, extracts lip regions in batches, writes a new video file of lip crops,
-        and returns the output video path.
-        """
         if not os.path.exists(video_path):
             print(f"❌ Video path does not exist: {video_path}")
+            return None
 
         video_name = Path(video_path).stem
         cap = cv2.VideoCapture(video_path)
@@ -66,13 +59,16 @@ class VideoPreprocessor_FANET:
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         frame_size = (width, height)
 
-        out_path = os.path.join(self.output_base_dir, f"{video_name}_lips_only.mp4")
+        # 🔥 CHANGE HERE: Save to per-GPU subdirectory
+        out_path = os.path.join(self.output_subdir, f"{video_name}_lips_only.mp4")
+
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(out_path, fourcc, fps, frame_size)
 
         if not out.isOpened():
-            raise Exception("❌ All codecs failed: H264, avc1, and mp4v.")
-        print(f"[INFO] Saving output to {out_path}")
+            raise Exception(f"❌ VideoWriter failed to open for {out_path}")
+
+        print(f"[INFO] [GPU {self.rank}] Saving output to {out_path}")
 
         buffer = []
         while True:
@@ -96,7 +92,6 @@ class VideoPreprocessor_FANET:
         return out_path
 
     def _process_batch(self, frame_batch, out_writer):
-        import torch
         frame_batch_tensor = torch.stack(
             [torch.from_numpy(frame).permute(2, 0, 1) for frame in frame_batch],
             dim=0
@@ -118,10 +113,7 @@ class VideoPreprocessor_FANET:
                     print(f"⚠️ Skipping frame due to invalid lip crop.")
                     continue
 
-                # ✅ Resize the lip crop back to full frame size
                 resized_crop = cv2.resize(lip_crop, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_CUBIC)
-
-                # ✅ Write resized lip crop
                 out_writer.write(resized_crop)
 
             except Exception as e:
@@ -132,11 +124,10 @@ class VideoPreprocessor_FANET:
         torch.cuda.empty_cache()
 
     def extract_lip_segment(self, frame, landmarks):
-        """Extract lip region based on mouth landmarks."""
         if landmarks is None:
             return None, (0, 0, 0, 0)
 
-        lip_landmarks = landmarks[48:]  # Mouth landmarks (48 to 67)
+        lip_landmarks = landmarks[48:]
 
         x_coords = lip_landmarks[:, 0].astype(int)
         y_coords = lip_landmarks[:, 1].astype(int)
@@ -144,19 +135,13 @@ class VideoPreprocessor_FANET:
         x_min, x_max = np.clip([x_coords.min(), x_coords.max()], 0, frame.shape[1] - 1)
         y_min, y_max = np.clip([y_coords.min(), y_coords.max()], 0, frame.shape[0] - 1)
 
-        # 🚨 Check if bounding box is valid and not too small
         if x_max <= x_min or y_max <= y_min or (x_max - x_min) < 10 or (y_max - y_min) < 10:
-            # Bad or tiny crop: return None
             return None, (x_min, y_min, x_max, y_max)
 
         lip_crop = frame[y_min:y_max, x_min:x_max]
         return lip_crop, (x_min, y_min, x_max, y_max)
 
     def parallel_main(self, video_paths: list[str]) -> list[str]:
-        """
-        Extract lip-only videos for all paths in parallel across GPUs,
-        saving outputs under `output_base_dir` and returning their paths.
-        """
         world_size = torch.cuda.device_count() or 1
         manager = mp.Manager()
         return_dict = manager.dict()
@@ -175,16 +160,19 @@ class VideoPreprocessor_FANET:
         print(f"✅ Extracted {len(all_outputs)} lip-only videos to '{self.output_base_dir}'.")
         return all_outputs
 
-# Worker process must be module-level for mp.spawn
 
+# Worker process
 
 def worker_process(rank, chunks, batch_size, output_dir, return_dict):
     torch.cuda.set_device(rank)
     device_str = f'cuda:{rank}'
+
+    # 🔥 CHANGE HERE: Pass rank into the processor
     processor = VideoPreprocessor_FANET(
         batch_size=batch_size,
         output_base_dir=output_dir,
-        device=device_str
+        device=device_str,
+        rank=rank  # 🔥 Pass GPU rank here!
     )
 
     assigned_videos = chunks[rank]
@@ -204,7 +192,7 @@ def worker_process(rank, chunks, batch_size, output_dir, return_dict):
             elapsed = time.time() - start_time
             avg_time_per_video = elapsed / (idx + 1)
             eta_seconds = avg_time_per_video * (num_videos - idx - 1)
-            print(f"[GPU {rank}] {idx + 1}/{num_videos} videos done. ETA: {eta_seconds/60:.2f} minutes.")
+            print(f"[GPU {rank}] {idx + 1}/{num_videos} videos done. ETA: {eta_seconds / 60:.2f} minutes.")
 
     return_dict[rank] = processed_videos
 
