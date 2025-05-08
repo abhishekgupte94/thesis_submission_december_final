@@ -60,7 +60,7 @@ class VideoPreprocessor_FANET:
         try:
             out = ffmpegcv.VideoWriter(
                 out_path,
-                'libx264',  # or 'h264_nvenc' if you want faster GPU encoding
+                'h264_nvenc',  # or 'h264_nvenc' if you want faster GPU encoding
                 fps,
                 (224, 224) # Set to lip crop size
                 # loglevel="error"
