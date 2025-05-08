@@ -7,24 +7,21 @@ import numpy as np
 import torch.multiprocessing as mp
 from pathlib import Path
 import time
+import ffmpegcv  # 🔥 CHANGE HERE: Added ffmpegcv import
 
 
 class VideoPreprocessor_FANET:
     """
-    Distributed video lip-extraction using FaceAlignment and OpenCV.
-    Saves lip-only videos to a unique output directory per GPU.
+    Distributed video lip-extraction using FaceAlignment and ffmpegcv for video saving.
     """
 
-    def __init__(self, batch_size: int, output_base_dir: str = None, device: str = 'cuda',
-                 rank: int = 0):  # 🔥 CHANGE HERE: added 'rank'
+    def __init__(self, batch_size: int, output_base_dir: str = None, device: str = 'cuda', rank: int = 0):
         self.batch_size = batch_size
         self.output_base_dir = output_base_dir
         self.device = device
-        self.rank = rank  # 🔥 CHANGE HERE: save rank inside the object
+        self.rank = rank  # rank still useful for GPU assignment
 
-        # 🔥 CHANGE HERE: create a subfolder per GPU
-        self.output_subdir = os.path.join(self.output_base_dir, f"gpu_{self.rank}")
-        os.makedirs(self.output_subdir, exist_ok=True)
+        os.makedirs(self.output_base_dir, exist_ok=True)
 
         self.fa = face_alignment.FaceAlignment(
             face_alignment.LandmarksType.TWO_D,
@@ -59,14 +56,11 @@ class VideoPreprocessor_FANET:
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         frame_size = (width, height)
 
-        # 🔥 CHANGE HERE: Save to per-GPU subdirectory
-        out_path = os.path.join(self.output_subdir, f"{video_name}_lips_only.mp4")
+        out_path = os.path.join(self.output_base_dir,
+                                f"{video_name}_lips_only.mp4")  # 🔥 CHANGE HERE: output to common dir
 
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(out_path, fourcc, fps, frame_size)
-
-        if not out.isOpened():
-            raise Exception(f"❌ VideoWriter failed to open for {out_path}")
+        # 🔥 CHANGE HERE: Use ffmpegcv VideoWriter instead of OpenCV
+        out = ffmpegcv.VideoWriter(out_path, fps=fps, width=frame_size[0], height=frame_size[1])
 
         print(f"[INFO] [GPU {self.rank}] Saving output to {out_path}")
 
@@ -161,18 +155,17 @@ class VideoPreprocessor_FANET:
         return all_outputs
 
 
-# Worker process
+# Worker process function
 
 def worker_process(rank, chunks, batch_size, output_dir, return_dict):
     torch.cuda.set_device(rank)
     device_str = f'cuda:{rank}'
 
-    # 🔥 CHANGE HERE: Pass rank into the processor
     processor = VideoPreprocessor_FANET(
         batch_size=batch_size,
         output_base_dir=output_dir,
         device=device_str,
-        rank=rank  # 🔥 Pass GPU rank here!
+        rank=rank  # still needed for GPU assignment and prints
     )
 
     assigned_videos = chunks[rank]
