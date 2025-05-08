@@ -6,6 +6,7 @@ from thesis_main_files.main_files.evaluation.art.t_sne import TSNEVisualizer
 from thesis_main_files.utils.files_imp import create_manifest_from_selected_files, preprocess_videos_for_evaluation
 import numpy as np
 from thesis_main_files.utils.preprocess_before_training import preprocess_videos_before_training, preprocess_videos_before_evaluation
+# from pathlib import Path
 class EvaluatorClass:
     def __init__(self, rank=0, device=None, feature_processor = None, output_txt_path = None):
         self.visualizer = TSNEVisualizer()
@@ -66,9 +67,9 @@ class EvaluatorClass:
         assert self.feature_processor is not None, "feature_processor must be set in EvaluatorClass"
         assert len(video_paths) == len(labels), "Mismatch between video_paths and labels"
 
-        if self.rank == 0:
-            print("🔁 Preprocessing videos before evaluation...")
-            preprocess_videos_for_evaluation(video_paths, preprocess_output_dir, batch_size=batch_size)
+        # if self.rank == 0:
+        #     print("🔁 Preprocessing videos before evaluation...")
+            # preprocess_videos_for_evaluation(video_paths, preprocess_output_dir, batch_size=batch_size)
 
         model = model.to(self.device)
         model.eval()
