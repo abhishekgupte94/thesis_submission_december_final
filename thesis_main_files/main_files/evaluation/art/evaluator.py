@@ -59,7 +59,7 @@ class EvaluatorClass:
                 save_path=retrieval_save_path
             )
 
-    def evaluate_after_training(self, model, video_paths, labels, preprocess_output_dir,
+    def evaluate_after_training(self, model, video_paths, labels,
                                 batch_size=128, t_sne_save_path=None, retrieval_save_path=None):
         """
         Batched evaluation, following training logic: create_manifest, feature extraction, then evaluation.

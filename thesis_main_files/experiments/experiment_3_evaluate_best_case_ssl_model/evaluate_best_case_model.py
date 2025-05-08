@@ -82,7 +82,7 @@ def main():
         model=model,
         video_paths=video_paths,
         labels=labels,
-        preprocess_output_dir=args.preprocess_output_dir,
+        # preprocess_output_dir=args.preprocess_output_dir,
         batch_size=args.batch_size,
         t_sne_save_path=t_sne_save_path,
         retrieval_save_path=retrieval_save_path
