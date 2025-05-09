@@ -16,8 +16,9 @@ import torch
 
 
 # from mmaction.datasets import build_dataloader, build_dataset
-from mmengine.dataset import build_dataloader
+# from mmengine.dataset import build_dataloader
 from mmaction.datasets import build_dataset
+from mmengine.runner import Runner  # ✅ Correct import
 
 
 from mmaction.models import build_model
@@ -366,9 +367,13 @@ def main():
         workers_per_gpu=cfg.data.get('workers_per_gpu', 1),
         dist=distributed,
         shuffle=False)
-    dataloader_setting = dict(dataloader_setting,
-                              **cfg.data.get('test_dataloader', {}))
-    data_loader = build_dataloader(dataset, **dataloader_setting)
+    # from mmengine.runner import Runner
+
+    # If you have a full test dataloader config:
+    dataloader_cfg = cfg.test_dataloader  # or cfg['test_dataloader']
+    dataloader = Runner.build_dataloader(dataloader_cfg)
+
+    # dataloader = Runner.build_dataloader(dataloader_cfg)
 
     # # 🔹 Force data loading
     # data_iter = iter(data_loader)  # Convert loader into an iterator
