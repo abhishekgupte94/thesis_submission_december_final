@@ -184,7 +184,10 @@ def inference_pytorch(args, cfg, distributed, data_loader):
         # model = fuse_conv_bn(model)
 
     if not distributed:
-        model = MMDataParallel(model, device_ids=[0])
+        # import torch
+        model = torch.nn.DataParallel(model, device_ids=[0])
+
+        # model = MMDataParallel(model, device_ids=[0])
         outputs = single_gpu_test(model, data_loader)
     else:
         model = MMDistributedDataParallel(
