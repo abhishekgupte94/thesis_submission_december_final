@@ -17,13 +17,14 @@ import torch
 
 from mmengine import Config, DictAction
 from mmengine.fileio import FileClient
-from mmcv.parallel.data_parallel import MMDataParallel
+# from mmcv.parallel.data_parallel import MMDataParallel
 from mmengine.model import  MMDistributedDataParallel
 from mmengine.dist import get_dist_info, init_dist
 from mmengine.runner.checkpoint import load_checkpoint
 # from mmengine.model import wrap_fp16_model
 # from mmengine.runner imp
 
+from mmengine.model import MMDataParallel
 
 # from mmaction.datasets import build_dataloader, build_dataset
 from mmengine.dataset import build_dataloader
