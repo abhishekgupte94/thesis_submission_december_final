@@ -7,20 +7,22 @@ import mmcv
 import torch
 
 
-from mmcv import Config, DictAction
-from mmcv.cnn import fuse_conv_bn
-from mmcv.fileio.io import file_handlers
-from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
-from mmcv.runner import get_dist_info, init_dist, load_checkpoint
-from mmcv.runner.fp16_utils import wrap_fp16_model
-# from mmengine import Config, DictAction
-# from mmengine.fileio import FileClient
-# # from mmcv.parallel.data_parallel import MMDataParallel
-# from mmengine.model import  MMDistributedDataParallel
-# from mmengine.dist import get_dist_info, init_dist
-# from mmengine.runner.checkpoint import load_checkpoint
-# # from mmengine.model import wrap_fp16_model
-# # from mmengine.runner imp
+# from mmcv import Config, DictAction
+# from mmcv.cnn import fuse_conv_bn
+# from mmcv.fileio.io import file_handlers
+# from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
+# from mmcv.runner import get_dist_info, init_dist, load_checkpoint
+# from mmcv.runner.fp16_utils import wrap_fp16_model
+
+
+from mmengine import Config, DictAction
+from mmengine.fileio import FileClient
+from mmcv.parallel.data_parallel import MMDataParallel
+from mmengine.model import  MMDistributedDataParallel
+from mmengine.dist import get_dist_info, init_dist
+from mmengine.runner.checkpoint import load_checkpoint
+# from mmengine.model import wrap_fp16_model
+# from mmengine.runner imp
 
 
 # from mmaction.datasets import build_dataloader, build_dataset
