@@ -69,8 +69,8 @@ def preprocess_videos_before_training(csv_path, csv_column, output_dir, batch_si
     preproc = VideoPreprocessor_FANET(
         batch_size=batch_size,
         output_base_dir=output_dir,
-        device="cuda",  # auto-handled per rank
-        use_fp16=True
+        device="cuda" # auto-handled per rank
+        # use_fp16=True
 
     )
 
