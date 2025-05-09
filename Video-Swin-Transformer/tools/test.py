@@ -15,6 +15,14 @@ import torch
 # from mmcv.runner.fp16_utils import wrap_fp16_model
 
 
+# from mmaction.datasets import build_dataloader, build_dataset
+from mmengine.dataset import build_dataloader
+from mmaction.datasets import build_dataset
+
+
+from mmaction.models import build_model
+from mmaction.utils import register_module_hooks
+
 from mmengine import Config, DictAction
 from mmengine.fileio import FileClient
 # from mmcv.parallel.data_parallel import MMDataParallel
@@ -26,13 +34,7 @@ from mmengine.runner.checkpoint import load_checkpoint
 
 from mmengine.model import MMDataParallel
 
-# from mmaction.datasets import build_dataloader, build_dataset
-from mmengine.dataset import build_dataloader
-from mmaction.datasets import build_dataset
 
-
-from mmaction.models import build_model
-from mmaction.utils import register_module_hooks
 # from mmcv.runner import wrap_fp16_model
 import sys
 import pickle
