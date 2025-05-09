@@ -7,35 +7,23 @@ import mmcv
 import torch
 
 
-# from mmcv import Config, DictAction
-# from mmcv.cnn import fuse_conv_bn
-# from mmcv.fileio.io import file_handlers
-# from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
-# from mmcv.runner import get_dist_info, init_dist, load_checkpoint
-# from mmcv.runner.fp16_utils import wrap_fp16_model
+from mmcv import Config, DictAction
+from mmcv.cnn import fuse_conv_bn
+from mmcv.fileio.io import file_handlers
+from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
+from mmcv.runner import get_dist_info, init_dist, load_checkpoint
+from mmcv.runner.fp16_utils import wrap_fp16_model
+# from mmengine import Config
+# from mmengine.fileio import FileClient
+# from mmengine.model.wrappers.utils import MMDataParallel, MMDistributedDataParallel
+# from mmengine.dist import get_dist_info, init_dist
+# from mmengine.runner.checkpoint import load_checkpoint
+# from mmengine.model import wrap_fp16_model
 
-
-
-from mmaction.datasets import build_dataset
-from mmengine.runner import Runner  # ✅ Correct import
-
-
+from mmaction.datasets import build_dataloader, build_dataset
 from mmaction.models import build_model
 from mmaction.utils import register_module_hooks
 
-from mmengine import Config, DictAction
-from mmengine.fileio import FileClient
-# from mmcv.parallel.data_parallel import MMDataParallel
-from mmengine.model import  MMDistributedDataParallel
-from mmengine.dist import get_dist_info, init_dist
-from mmengine.runner.checkpoint import load_checkpoint
-# from mmengine.model import wrap_fp16_model
-# from mmengine.runner imp
-
-from mmengine.model import MMDataParallel
-
-
-# from mmcv.runner import wrap_fp16_model
 import sys
 import pickle
 # TODO import test functions from mmcv and delete them from mmaction2
@@ -184,10 +172,7 @@ def inference_pytorch(args, cfg, distributed, data_loader):
         # model = fuse_conv_bn(model)
 
     if not distributed:
-        # import torch
-        model = torch.nn.DataParallel(model, device_ids=[0])
-
-        # model = MMDataParallel(model, device_ids=[0])
+        model = MMDataParallel(model, device_ids=[0])
         outputs = single_gpu_test(model, data_loader)
     else:
         model = MMDistributedDataParallel(
@@ -366,13 +351,9 @@ def main():
         workers_per_gpu=cfg.data.get('workers_per_gpu', 1),
         dist=distributed,
         shuffle=False)
-    # from mmengine.runner import Runner
-
-    # If you have a full test dataloader config:
-    dataloader_cfg = cfg.test_dataloader  # or cfg['test_dataloader']
-    dataloader = Runner.build_dataloader(dataloader_cfg)
-
-    # dataloader = Runner.build_dataloader(dataloader_cfg)
+    dataloader_setting = dict(dataloader_setting,
+                              **cfg.data.get('test_dataloader', {}))
+    data_loader = build_dataloader(dataset, **dataloader_setting)
 
     # # 🔹 Force data loading
     # data_iter = iter(data_loader)  # Convert loader into an iterator
