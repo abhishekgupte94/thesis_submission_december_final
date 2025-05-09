@@ -2,7 +2,7 @@
 from torch.utils.data import Dataset
 
 # Importing required modules for video/audio preprocessing and feature extraction
-from thesis_main_files.main_files.preprocessing.art_avdf.art.video_preprocessor_SAVE_FILES_MULTI_GPU import VideoPreprocessor_FANET
+from thesis_main_files.main_files.preprocessing.art_avdf.art.video_preprocessor_SAVE_FILES_MULTI_GPU import  parallel_main
 from thesis_main_files.main_files.feature_extraction.art_avdf.art.feature_extractor_ART_Video import SWIN_EXECUTOR as VideoFeatureExtractor
 from thesis_main_files.main_files.preprocessing.art_avdf.art.audio_preprocessorart import AudioPreprocessor
 from pathlib import Path
@@ -65,17 +65,17 @@ def preprocess_videos_before_training(csv_path, csv_column, output_dir, batch_si
     #
     # video_paths = df[csv_column].tolist()
 
-    # Step 2: Initialize Preprocessor
-    preproc = VideoPreprocessor_FANET(
-        batch_size=batch_size,
-        output_base_dir=output_dir,
-        device="cuda" # auto-handled per rank
-        # use_fp16=True
-
-    )
-
+    # # Step 2: Initialize Preprocessor
+    # preproc = VideoPreprocessor_FANET(
+    #     batch_size=batch_size,
+    #     output_base_dir=output_dir,
+    #     device="cuda" # auto-handled per rank
+    #     # use_fp16=True
+    #
+    # )
+    parallel_main(video_paths,batch_size,output_dir)
     # Step 3: Preprocess all videos
-    preproc.parallel_main(video_paths)
+    # preproc.parallel_main(video_paths)
 
     print(f"✅ All videos preprocessed and saved to: {output_dir}")
 
