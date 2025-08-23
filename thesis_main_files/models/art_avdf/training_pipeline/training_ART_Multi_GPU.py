@@ -14,7 +14,8 @@ from thesis_main_files.utils.files_imp import create_manifest_from_selected_file
 # from thesis_main_files.models.data_loaders.data_loader_ART import create_manifest_from_selected_files
 # from pyJoules.energy_meter import EnergyMeter
 # from pyJoules.handler.csv_handler import CSVHandler
-
+from thesis_main_files.models.art_avdf.encoders.new_encoder_for_ssl.complete_pipeline_cpu import CPUOptimizedAlignment
+from thesis_main_files.models.art_avdf.encoders.new_encoder_for_ssl.alignment_pipeline_gpu import GPUOptimizedAlignment, SelfSupervisedAVLoss
 
 class TrainingPipeline:
     def __init__(self, dataset, batch_size, learning_rate, num_epochs, device, feature_processor, output_txt_path, local_rank):
@@ -22,7 +23,13 @@ class TrainingPipeline:
         self.device = torch.device(f'cuda:{local_rank}')
         torch.cuda.set_device(self.device)
 
-        self.model = ARTModule().to(self.device)
+        # 🔄 CHANGE: use GPUOptimizedAlignment instead of ARTModule
+        self.model = GPUOptimizedAlignment(
+            rank=local_rank,
+            world_size=dist.get_world_size(),
+            K=50,
+            common_dim=512
+        ).to(self.device)
         self.model = nn.parallel.DistributedDataParallel(self.model, device_ids=[local_rank])
 
         self.dataset = dataset
@@ -39,14 +46,18 @@ class TrainingPipeline:
 
         self.optimizer = optim.SGD(self.model.parameters(), lr=learning_rate)
         self.num_epochs = num_epochs
-        self.loss_fn = SelfSupervisedLearning().to(self.device)
+
+        # 🔄 CHANGE: use SelfSupervisedAVLoss instead of SelfSupervisedLearning
+        self.loss_fn = SelfSupervisedAVLoss(initial_temperature=0.1).to(self.device)
+
         self.feature_processor = feature_processor
-        self.evaluator = EvaluatorClass()
+        # self.evaluator = EvaluatorClass()  # 🔒 Commented out for now
         self.output_txt_path = output_txt_path
 
         log_dir = f"runs/ssl_ddp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         self.writer = SummaryWriter(log_dir=log_dir)
-    def extract_features(self,video_paths):
+
+    def extract_features(self, video_paths):
         processed_audio_features, processed_video_features = self.feature_processor.create_datasubset(
             csv_path=None,
             use_preprocessed=False,
@@ -61,12 +72,9 @@ class TrainingPipeline:
 
         for epoch in range(self.num_epochs):
             self.sampler.set_epoch(epoch)
-
             running_loss = 0.0
 
             for video_paths, audio_paths, labels in self.dataloader:
-                create_manifest_from_selected_files(video_paths, self.output_txt_path)
-
                 processed_audio_features, processed_video_features = self.extract_features(video_paths)
 
                 if processed_audio_features is None or processed_video_features is None:
@@ -74,12 +82,19 @@ class TrainingPipeline:
                     continue
 
                 self.optimizer.zero_grad()
-                # 🔋 Start energy measurement for training step
-                f_art, f_lip = self.model(
+
+                # 🔄 CHANGE: GPUOptimizedAlignment outputs a dict
+                output = self.model(
                     audio_features=processed_audio_features,
                     video_features=processed_video_features
                 )
-                loss, similarity_matrix = self.loss_fn(f_art, f_lip)
+
+                # Global pooled features for loss
+                audio_global = output['audio_aligned'].mean(dim=1)  # [B, 512]
+                video_global = output['video_aligned'].mean(dim=1)  # [B, 512]
+
+                # 🔄 CHANGE: use SelfSupervisedAVLoss
+                loss = self.loss_fn(audio_global, video_global)
 
                 loss.backward()
                 self.optimizer.step()
@@ -91,10 +106,11 @@ class TrainingPipeline:
 
                 global_step += 1
 
-                if (epoch + 1) % 50 == 0 and dist.get_rank() == 0:
-                    save_path_tsne = os.path.join(checkpoint_dir, f"t_sne_{epoch + 1}.png")
-                    save_path_retrieval = os.path.join(checkpoint_dir, f"retrieval_{epoch + 1}.png")
-                    self.start_evaluation(self.model.module, None, None, similarity_matrix, save_path_tsne, save_path_retrieval)
+                # 🔒 Commented out evaluator for now
+                # if (epoch + 1) % 50 == 0 and dist.get_rank() == 0:
+                #     save_path_tsne = os.path.join(checkpoint_dir, f"t_sne_{epoch + 1}.png")
+                #     save_path_retrieval = os.path.join(checkpoint_dir, f"retrieval_{epoch + 1}.png")
+                #     self.start_evaluation(self.model.module, None, None, similarity_matrix, save_path_tsne, save_path_retrieval)
 
             avg_loss = running_loss / len(self.dataloader)
             print(f"Epoch [{epoch + 1}/{self.num_epochs}], Loss: {avg_loss:.4f}")
@@ -121,6 +137,7 @@ class TrainingPipeline:
             'loss': current_loss
         }, save_path)
         print(f"✅ Training checkpoint saved to: {save_path}")
+
     def save_final_state(self, path="final_model.pt"):
         if dist.get_rank() == 0:
             torch.save({
@@ -129,14 +146,3 @@ class TrainingPipeline:
                 'epoch': self.num_epochs
             }, path)
             print(f"✅ Final model saved at: {path}")
-    def start_evaluation(self, model, audio_inputs, video_inputs, similarity_matrix, t_sne_save_path=None, retrieval_save_path=None):
-        self.evaluator.evaluate_during_training(
-            model=self.model.module,
-            similarity_matrix=similarity_matrix,
-            audio_inputs=audio_inputs,
-            video_inputs=video_inputs,
-            t_sne_save_path=t_sne_save_path,
-            retrieval_save_path=retrieval_save_path
-        )
-
-        print("✅ Evaluation complete.")

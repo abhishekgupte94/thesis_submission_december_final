@@ -69,6 +69,16 @@ def main():
 
     # 4) Load dataset with custom CSV name
     dataset = VideoAudioDataset(get_project_root(), csv_name=args.csv_file)
+    # mvit_core = MvitFeatureExtractor(
+    #     device=str(device),
+    #     preserve_temporal=True,
+    #     temporal_pool=True,
+    #     aggregate="none",
+    #     dtype=torch.float16,
+    #     verbose=False
+    # )
+    #
+    # mvit_adapter = MViTVideoFeatureExtractor(mvit_core, device=device)
 
     # 5) Feature processor
     feature_processor = VideoAudioFeatureProcessor(

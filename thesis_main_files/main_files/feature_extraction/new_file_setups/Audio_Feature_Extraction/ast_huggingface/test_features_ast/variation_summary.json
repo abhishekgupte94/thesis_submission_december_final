@@ -1,0 +1,82 @@
+{
+  "shapes": {
+    "features": [
+      4,
+      101,
+      768
+    ],
+    "time_axis": [
+      101
+    ]
+  },
+  "paths": [
+    "/Users/abhishekgupte_macbookpro/PycharmProjects/new_pitch_estimator_project/AST_MODEL_SETUP/new_updated_hope/video_dir_test/three_fake.mp4",
+    "/Users/abhishekgupte_macbookpro/PycharmProjects/new_pitch_estimator_project/AST_MODEL_SETUP/new_updated_hope/video_dir_test/three_real.mp4",
+    "/Users/abhishekgupte_macbookpro/PycharmProjects/new_pitch_estimator_project/AST_MODEL_SETUP/new_updated_hope/video_dir_test/two_fake.mp4",
+    "/Users/abhishekgupte_macbookpro/PycharmProjects/new_pitch_estimator_project/AST_MODEL_SETUP/new_updated_hope/video_dir_test/two_real.mp4"
+  ],
+  "temporal_variance_mean_per_clip": [
+    0.2349032312631607,
+    0.18664349615573883,
+    0.18312008678913116,
+    0.19109968841075897
+  ],
+  "embedding_variance_mean_per_clip": [
+    1.3450366258621216,
+    1.4090232849121094,
+    1.3632347583770752,
+    1.332421898841858
+  ],
+  "pairwise_clip_mean_cosine": [
+    [
+      0.9999999403953552,
+      0.9514211416244507,
+      0.9714443683624268,
+      0.9410927891731262
+    ],
+    [
+      0.9514211416244507,
+      1.0,
+      0.953619658946991,
+      0.9653745293617249
+    ],
+    [
+      0.9714443683624268,
+      0.953619658946991,
+      1.0000001192092896,
+      0.9648330211639404
+    ],
+    [
+      0.9410927891731262,
+      0.9653745293617249,
+      0.9648330211639404,
+      1.0
+    ]
+  ],
+  "pairwise_time_aligned_cosine_mean_over_time": [
+    [
+      1.0,
+      0.8794370889663696,
+      0.8449466228485107,
+      0.8054279088973999
+    ],
+    [
+      0.8794370889663696,
+      1.0,
+      0.8431097269058228,
+      0.8459057807922363
+    ],
+    [
+      0.8449466228485107,
+      0.8431097269058228,
+      1.0,
+      0.9007704257965088
+    ],
+    [
+      0.8054279088973999,
+      0.8459057807922363,
+      0.9007704257965088,
+      1.0
+    ]
+  ]
+}

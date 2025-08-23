@@ -1,12 +1,20 @@
 #
 from torch.utils.data import Dataset
+import torch
+from torch.utils.tensorboard.summary import video
 
 # Importing required modules for video/audio preprocessing and feature extraction
 from thesis_main_files.main_files.preprocessing.art_avdf.art.video_preprocessor_SAVE_FILES_MULTI_GPU import  parallel_main
-from thesis_main_files.main_files.feature_extraction.art_avdf.art.feature_extractor_ART_Video import SWIN_EXECUTOR as VideoFeatureExtractor
+from thesis_main_files.main_files.feature_extraction.new_file_setups.Video_Feature_Extraction.mvitv2_torchvision.mvit_adapter import MViTVideoFeatureExtractor
+# from thesis_main_files.main_files.feature_extraction.art_avdf.art.feature_extractor_ART_Video import SWIN_EXECUTOR as VideoFeatureExtractor
 from thesis_main_files.main_files.preprocessing.art_avdf.art.audio_preprocessorart import AudioPreprocessor
+# from thesis_main_files.main_files.preprocessing.art_avdf.art.video_preprocessorart_Fanet_gpu import VideoPreprocessor_FANET
+from thesis_main_files.main_files.preprocessing.art_avdf.art.video_preprocessor_SAVE_FILES_MULTI_GPU import parallel_main
+from thesis_main_files.main_files.feature_extraction.new_file_setups.Audio_Feature_Extraction.ast_huggingface.extract_audio_features_from_AST import ASTAudioExtractor
+
 from pathlib import Path
 import pandas as pd
+
 # from video_preprocessor_fanet_multi_gpu import VideoPreprocessor_FANET
 def preprocess_videos_before_evaluation(csv_path, csv_column, output_dir, batch_size=128):
     """
@@ -14,7 +22,7 @@ def preprocess_videos_before_evaluation(csv_path, csv_column, output_dir, batch_
 
     Args:
         csv_path (str): Path to the CSV file.
-        csv_column (str): Column in CSV containing video paths.
+        csv_column (str): Column CSV containing video paths.
         output_dir (str): Directory where lip-only videos will be saved.
         batch_size (int): Number of frames per batch for lip extraction.
     """
@@ -30,16 +38,17 @@ def preprocess_videos_before_evaluation(csv_path, csv_column, output_dir, batch_
     # video_paths = df[csv_column].tolist()
 
     # Step 2: Initialize Preprocessor
-    preproc = VideoPreprocessor_FANET(
-        batch_size=batch_size,
-        output_base_dir=output_dir,
-        device="cuda"  # auto-handled per rank
-        # use_fp16=True
+    # preproc = VideoPreprocessor_FANET(
+    #     batch_size=batch_size,
+    #     output_base_dir=output_dir,
+    #     device="cuda"  # auto-handled per rank
+    #     # use_fp16=True
+    #
+    # )
 
-    )
 
     # Step 3: Preprocess all videos
-    preproc.parallel_main(video_paths)
+    # preproc.parallel_main(video_paths)
 
     print(f"✅ All videos preprocessed and saved to: {output_dir}")
 
@@ -122,6 +131,74 @@ def create_file_paths(project_dir_curr, csv_name="training_data_two.csv"):
     labels = df['label'].tolist()
 
     return lips_only_paths, original_paths, labels
+
+def create_file_paths_for_train(csv_path, video_dir):
+    """
+    Generates full paths for video files based on filenames from a CSV file.
+
+    Args:
+        csv_path (str or Path): Path to the CSV file containing filenames and labels.
+        video_dir (str or Path): Directory where the corresponding video files are stored
+                                 (from convert_paths_for_training).
+
+    Returns:
+        tuple: (original_paths, labels)
+    """
+    csv_path = Path(csv_path)
+    video_dir = Path(video_dir)
+
+    df = pd.read_csv(csv_path)
+
+    original_paths = []
+    for filename in df['file']:
+        # Build full path inside the video_dir
+        full_original_path = video_dir / filename
+        original_paths.append(str(full_original_path))
+
+    labels = df['label'].tolist()
+
+    return original_paths, labels
+
+import pandas as pd
+from pathlib import Path
+
+def create_file_paths_for_evaluation(fake_csv_path, fake_video_dir, real_csv_path, real_video_dir):
+    """
+    Generates full paths for fake and real video files based on filenames from their CSVs.
+
+    Args:
+        fake_csv_path (str or Path): Path to the CSV file listing fake video filenames + labels.
+        fake_video_dir (str or Path): Directory containing the corresponding fake video files.
+        real_csv_path (str or Path): Path to the CSV file listing real video filenames + labels.
+        real_video_dir (str or Path): Directory containing the corresponding real video files.
+
+    Returns:
+        tuple: (all_paths, labels, fake_paths, real_paths)
+            - all_paths: combined list of fake + real video paths
+            - labels: combined list of labels (from CSVs)
+            - fake_paths: list of fake video paths
+            - real_paths: list of real video paths
+    """
+    fake_csv_path = Path(fake_csv_path)
+    real_csv_path = Path(real_csv_path)
+    fake_video_dir = Path(fake_video_dir)
+    real_video_dir = Path(real_video_dir)
+
+    # --- Fake files ---
+    df_fake = pd.read_csv(fake_csv_path)
+    fake_paths = [(fake_video_dir / fname) for fname in df_fake['file']]
+    fake_labels = df_fake['label'].tolist()
+
+    # --- Real files ---
+    df_real = pd.read_csv(real_csv_path)
+    real_paths = [(real_video_dir / fname) for fname in df_real['file']]
+    real_labels = df_real['label'].tolist()
+
+    # --- Combine ---
+    all_paths = [str(p) for p in (fake_paths + real_paths)]
+    labels = fake_labels + real_labels
+
+    return all_paths, labels, [str(p) for p in fake_paths], [str(p) for p in real_paths]
 
 def create_file_paths_for_inference_ssl(project_dir_curr, csv_name="sampled_combined_data.csv"):
     """
@@ -271,6 +348,70 @@ def convert_paths():
     feature_dir_vid = str(project_dir_video_swin)
 
     return csv_path, video_preprocess_dir, feature_dir_vid, video_dir, real_output_txt_path
+from pathlib import Path
+
+def convert_paths_for_training(csv_name: str = "sample_real_70_percent_half1.csv"):
+    """
+    Prepare all necessary paths for processing and feature extraction (training).
+    CSV file stays with .csv extension, but the video directory uses the filename without extension.
+    """
+    project_dir_curr = get_project_root()
+
+    # Build paths
+    csv_path = str(
+        project_dir_curr / "datasets" / "processed" / "csv_files"
+        / "lav_df" / "new_setup" / "train_files" / csv_name
+    )
+
+    video_dir_name = Path(csv_name).stem  # remove .csv extension
+    video_dir = str(
+        project_dir_curr / "datasets" / "processed" / "lav_df"
+        / "new_setup" / "train_files" / video_dir_name
+    )
+
+    return csv_path, video_dir
+
+
+def convert_paths_for_evaluation(fake_csv_name: str):
+    """
+    Prepare all necessary paths for processing and feature extraction (evaluation).
+    For evaluation, fake and real csvs are mapped to their respective directories.
+    Directories use the filename without extension.
+    """
+    project_dir_curr = get_project_root()
+
+    # --- Derive real_csv_name from fake_csv_name ---
+    base_name = Path(fake_csv_name).stem
+    if "_" not in base_name:
+        raise ValueError(f"Unexpected fake_csv_name format: {fake_csv_name}")
+
+    suffix = base_name.split("_")[-1]  # e.g. "ge7p5" or "lt7p5"
+    real_csv_name = f"{suffix}.csv"
+
+    # --- Construct fake paths ---
+    fake_csv_path = str(
+        project_dir_curr / "datasets" / "processed" / "csv_files"
+        / "lav_df" / "new_setup" / "evaluate_files" / "evaluate" / "fake_files" / fake_csv_name
+    )
+    fake_video_dir_name = Path(fake_csv_name).stem
+    fake_video_dir = str(
+        project_dir_curr / "datasets" / "processed" / "lav_df"
+        / "new_setup" / "evaluate_files" / "evaluate" / "fake_files" / fake_video_dir_name
+    )
+
+    # --- Construct real paths ---
+    real_csv_path = str(
+        project_dir_curr / "datasets" / "processed" / "csv_files"
+        / "lav_df" / "new_setup" / "evaluate_files" / "evaluate" / "real_file_equivalent" / real_csv_name
+    )
+    real_video_dir_name = Path(real_csv_name).stem
+    real_video_dir = str(
+        project_dir_curr / "datasets" / "processed" / "lav_df"
+        / "new_setup" / "evaluate_files" / "evaluate" / "real_file_equivalent" / real_video_dir_name
+    )
+
+    return fake_csv_path, fake_video_dir, real_csv_path, real_video_dir
+
 
 ###############################################################################
 # COMPONENT + FEATURE EXTRACTION CLASSES (Audio restored via video paths)
@@ -293,29 +434,59 @@ class VideoAudioFeatureExtractor:
     """
     Responsible for feature extraction from preprocessed video components and audio waveforms.
     """
-    def extract_video_features(self, video_feature_extractor):
+    def __init__(self):
+        self.mvit_adapter = MViTVideoFeatureExtractor(
+            device=torch.device(f"cuda:{torch.cuda.current_device()}"),  # torch.device(f"cuda:{local_rank}")
+            amp=True,  # uses fp16 autocast in your _forward_model
+            strict_temporal=False,  # set True to enforce equal T' within a batch
+            save_video_feats=False,  # set True if you want .pt saved per sample
+            save_dir=None,  # or a path to store .pt files
+            preserve_temporal=True,
+            temporal_pool=True,
+            aggregate="none"
+        )
+        self.audio_extractor = ASTAudioExtractor(
+            device=device,
+            amp=amp,
+            time_series=True,     # 'yes' by default
+            token_pool="none",    # keep time series, no pooling
+            verbose=False,
+            default_save_dir=(audio_save_dir if save_audio_feats else None),
+        )
+    def extract_video_features(self, video_paths):
         try:
-            # Execute Swin Transformer feature extraction
-            features = video_feature_extractor.execute_swin()
+            # our MViT adapter exposes .execute(video_paths)
+            features = self.mvit_adapter.execute(video_paths)
             return features
         except Exception as e:
-            print(e)
-            return []
+            print(f"Video feature extraction error: {e}")
+            return None
 
-    def extract_audio_features(self, audio_preprocessor, video_paths, batch_size,save_path = None):
+    def extract_audio_features(self, video_paths, batch_size,save_path = None):
         try:
-            # Process video paths as if they contain associated audio for waveform extraction
-            audio_features = audio_preprocessor.main_processing_waveforms(video_paths, batch_size,save_path = save_path)
-            return audio_features
+            items = self.audio_extractor.extract_from_paths(
+                video_paths,
+                save=(self.audio_extractor.default_save_dir is not None),
+                save_dir=self.audio_extractor.default_save_dir,
+                overwrite=False
+            )
+            feats = [it["features"] for it in items]  # CPU tensors
+            shapes = {tuple(f.shape) for f in feats}
+            if len(shapes) == 1:
+                batch = torch.stack(feats, dim=0)
+            else:
+                batch = torch.stack([f.mean(0) if f.dim() == 2 else f for f in feats], dim=0)
+            # put on the same device as the extractor (trainer’s rank)
+            return batch.to(self.audio_extractor.device, non_blocking=True)
         except Exception as e:
-            print(f"Error extracting audio feature for {video_paths}: {e}")
-            return []
+            print(f"Audio Feature Extraction Error: {e}")
+            return None
 
 class VideoAudioFeatureProcessor:
     """
     Combines component and feature extractors to produce a usable dataset.
     """
-    def __init__(self, video_preprocess_dir,batch_size):
+    def __init__(self,batch_size):
         self.video_preprocess_dir = video_preprocess_dir
         # self.feature_dir_vid = feature_dir_vid
 
@@ -327,11 +498,11 @@ class VideoAudioFeatureProcessor:
         # )
 
         # Initialize audio preprocessor
-        self.audio_preprocessor = AudioPreprocessor()
+        # self.audio_preprocessor = AudioPreprocessor()
 
         # Initialize feature extractor (Swin Transformer)
-        self.video_feature_ext = VideoFeatureExtractor(video_preprocess_dir=video_preprocess_dir)
-
+        # self.video_feature_ext = VideoAudioFeatureExtractor()
+        # self.video_feature_ext = mvit_extractor
         # self.component_extractor = VideoComponentExtractor()
         self.feature_extractor = VideoAudioFeatureExtractor()
         self.batch_size = batch_size
@@ -353,21 +524,20 @@ class VideoAudioFeatureProcessor:
         try:
             # Extract features from video if component extraction succeeded
             # if not video_error:
-                processed_video_features = self.feature_extractor.extract_video_features(self.video_feature_ext)
+            processed_video_features = self.feature_extractor.extract_video_features(video_paths)
         except Exception as e:
             print(f"Video Feature Extraction Error: {e}")
             video_error = True
 
         try:
             # Extract audio features using video file paths
-            processed_audio_features = self.feature_extractor.extract_audio_features(
-                self.audio_preprocessor, video_paths, self.batch_size)
+            processed_audio_features = self.feature_extractor.extract_audio_features(video_paths, self.batch_size)
         except Exception as e:
             print(f"Audio Feature Extraction Error: {e}")
             audio_error = True
 
         # Return features only if both succeeded
-        if not audio_error:
+        if not audio_error and not video_error:
             return processed_audio_features, processed_video_features
         else:
             print("Errors encountered. No features returned.")
@@ -377,64 +547,114 @@ class VideoAudioFeatureProcessor:
 # DATASET CLASS
 ###############################################################################
 
+
+
 class VideoAudioDataset(Dataset):
     """
-    Custom PyTorch Dataset for loading video paths and labels.
+    Dataset for loading video/audio samples for training.
+    Expects a CSV and a video directory, then builds full file paths.
     """
-    def __init__(self, project_dir_curr, csv_name="training_data_two.csv", augmentations=None):
-        self.project_dir_curr = project_dir_curr
-        self.csv_name = csv_name
-        self.augmentations = augmentations
 
-        # Load paths and labels directly (audio paths removed)
-        self.video_paths,self.audio_paths, self.labels = create_file_paths(project_dir_curr, csv_name)
+    def __init__(self, csv_path: str, video_dir: str, transform=None):
+        """
+        Args:
+            csv_path (str): Path to the CSV file with 'file' and 'label' columns.
+            video_dir (str): Directory containing the corresponding video files.
+            transform (callable, optional): Optional transform to be applied on a sample.
+        """
+        self.csv_path = Path(csv_path)
+        self.video_dir = Path(video_dir)
+        self.transform = transform
 
-        # Store data as list of tuples (video_path, label)
-        self.data = list(zip(self.video_paths,self.audio_paths, self.labels))
+        # Use helper to build paths + labels
+        self.video_paths, self.labels = create_file_paths_for_training(self.csv_path, self.video_dir)
+
+        assert len(self.video_paths) == len(self.labels), (
+            f"Mismatch between number of files ({len(self.video_paths)}) "
+            f"and labels ({len(self.labels)}). Check {self.csv_path}"
+        )
 
     def __len__(self):
-        # Return total number of samples
-        return len(self.data)
+        return len(self.video_paths)
 
     def __getitem__(self, idx):
-        # Get one sample from dataset
-        video_path, audio_path, label = self.data[idx]
+        video_path = self.video_paths[idx]
+        label = self.labels[idx]
 
-        # Apply optional augmentations
-        if self.augmentations:
-            video_path = self.augmentations(video_path)
+        sample = {
+            "video_path": str(video_path),
+            "label": label
+        }
 
-        # Return video path and label
-        return str(video_path),str(audio_path), label
+        if self.transform:
+            sample = self.transform(sample)
+
+        return sample
+
 
 class VideoAudioDatasetEval(Dataset):
     """
-    Custom PyTorch Dataset for loading video paths and labels for inference evaluation.
+    Dataset for loading fake + real video paths and labels for inference-time evaluation.
+
+    Expects explicit CSV paths and corresponding video directories for both fake and real:
+      - fake_csv_path, fake_video_dir
+      - real_csv_path, real_video_dir
+
+    These should come from convert_paths_for_evaluation(fake_csv_name).
     """
-    def __init__(self, project_dir_curr, csv_name="sampled_combined_data.csv", augmentations=None):
-        self.project_dir_curr = project_dir_curr
-        self.csv_name = csv_name
+
+    def __init__(
+        self,
+        fake_csv_path,
+        fake_video_dir,
+        real_csv_path,
+        real_video_dir,
+        augmentations=None,
+    ):
+        """
+        Args:
+            fake_csv_path (str | Path): CSV file containing 'file' and 'label' for fake samples.
+            fake_video_dir (str | Path): Directory with fake video files (folder named after CSV stem).
+            real_csv_path (str | Path): CSV file containing 'file' and 'label' for real samples.
+            real_video_dir (str | Path): Directory with real video files (folder named after CSV stem).
+            augmentations (callable, optional): Optional transform applied to each video path (string-in, string-out).
+        """
+        self.fake_csv_path = str(fake_csv_path)
+        self.fake_video_dir = str(fake_video_dir)
+        self.real_csv_path = str(real_csv_path)
+        self.real_video_dir = str(real_video_dir)
         self.augmentations = augmentations
 
-        # Load paths and labels directly
-        self.video_paths, self.labels = create_file_paths_for_inference_eval(project_dir_curr, csv_name)
+        # Build full path lists + labels using your helper
+        (all_paths,
+         labels,
+         fake_paths,
+         real_paths) = create_file_paths_for_evaluation(
+            self.fake_csv_path,
+            self.fake_video_dir,
+            self.real_csv_path,
+            self.real_video_dir
+        )
 
-        # Store data as list of tuples (video_path, label)
+        # Public attributes (useful for downstream code)
+        self.video_paths = all_paths              # combined fake + real
+        self.labels = labels
+        self.fake_paths = fake_paths              # subset: only fake
+        self.real_paths = real_paths              # subset: only real
+
+        # Backing list of (path, label) tuples
         self.data = list(zip(self.video_paths, self.labels))
 
     def __len__(self):
-        # Return total number of samples
         return len(self.data)
 
     def __getitem__(self, idx):
-        # Get one sample from dataset
         video_path, label = self.data[idx]
 
-        # Apply optional augmentations
+        # Optional augmentations operate on the path string (kept consistent with your prior interface)
         if self.augmentations:
             video_path = self.augmentations(video_path)
 
-        # Return video path and label
         return str(video_path), label
 
 # if __name__ == '__main__':

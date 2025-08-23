@@ -1,3 +1,4 @@
+
 import torch
 import torch.nn.functional as F
 import os
@@ -15,14 +16,25 @@ class EvaluatorClass:
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.feature_processor = feature_processor
         self.output_txt_path = output_txt_path
+
     def compute_similarity(self, f_art, f_lip):
-        f_art_norm = F.normalize(f_art, dim=1)
-        f_lip_norm = F.normalize(f_lip, dim=1)
-        similarity_matrix = torch.matmul(f_lip_norm, f_art_norm.T)
+        """
+        Compute cosine similarity matrix between audio and video features.
+
+        Args:
+            f_art (Tensor): Audio feature embeddings (N x D)
+            f_lip (Tensor): Video feature embeddings (N x D)
+
+        Returns:
+            Tensor: Cosine similarity matrix (N x N)
+        """
+        f_art = torch.nn.functional.normalize(f_art, p=2, dim=1)
+        f_lip = torch.nn.functional.normalize(f_lip, p=2, dim=1)
+        similarity_matrix = torch.matmul(f_art, f_lip.t())
         return similarity_matrix
 
     def evaluate_during_training(self, model, similarity_matrix,
-                                 audio_inputs, video_inputs,
+                                 audio_inputs=None, video_inputs=None,
                                  t_sne_save_path=None, retrieval_save_path=None):
         """
         Evaluate the model during training using similarity matrix, t-SNE, and retrieval heatmap.
@@ -36,17 +48,12 @@ class EvaluatorClass:
             retrieval_save_path (str, optional): File path to save retrieval heatmap.
         """
         if similarity_matrix is None:
-            print("❌ Similarity matrix is None. Skipping evaluation.")
-            return
+            raise ValueError("similarity_matrix is required for evaluate_during_training")
 
-        if self.rank != 0:
-            return
-
-        with torch.no_grad():
+        if self.rank == 0:
             recall_at_1 = self.retrieval.compute_recall_at_k(similarity_matrix, k=1)
-            print(f"[Eval] Recall@1: {recall_at_1:.4f}")
+            print(f"[Eval/Train] Recall@1: {recall_at_1:.4f}")
 
-            # Visualize t-SNE using post-SSL audio/video embeddings
             if audio_inputs is not None and video_inputs is not None:
                 self.visualizer.visualize(
                     audio_inputs.detach().cpu().numpy(),
@@ -69,7 +76,7 @@ class EvaluatorClass:
 
         # if self.rank == 0:
         #     print("🔁 Preprocessing videos before evaluation...")
-            # preprocess_videos_for_evaluation(video_paths, preprocess_output_dir, batch_size=batch_size)
+        #     preprocess_videos_for_evaluation(video_paths, preprocess_output_dir, batch_size=batch_size)
 
         model = model.to(self.device)
         model.eval()
@@ -82,9 +89,8 @@ class EvaluatorClass:
             for i in range(0, len(video_paths), batch_size):
                 batch_video_paths = video_paths[i:i + batch_size]
                 batch_labels = labels[i:i + batch_size]
-
                 # 1. Very Important: Create manifest for this batch
-                create_manifest_from_selected_files(batch_video_paths, self.output_txt_path)
+                # create_manifest_from_selected_files(batch_video_paths, self.output_txt_path)
 
                 # 2. Feature extraction
                 processed_audio_features, processed_video_features = self.feature_processor.create_datasubset(
@@ -106,107 +112,92 @@ class EvaluatorClass:
                     video_features=processed_video_features
                 )
 
-                all_f_art.append(f_art)
-                all_f_lip.append(f_lip)
+                if isinstance(f_art, torch.Tensor):
+                    all_f_art.append(f_art.detach().to(self.device))
+                if isinstance(f_lip, torch.Tensor):
+                    all_f_lip.append(f_lip.detach().to(self.device))
 
-        if len(all_f_art) == 0 or len(all_f_lip) == 0:
-            print("❌ No valid features extracted for evaluation.")
-            return
+        if not all_f_art or not all_f_lip:
+            raise RuntimeError("No features were produced by feature_processor; check inputs and processor.")
 
-        # 4. Stack all batches
-        f_art_all = torch.cat(all_f_art, dim=0)
-        f_lip_all = torch.cat(all_f_lip, dim=0)
+        #         # 1. Very Important: Create manifest for this batch
+        #         create_manifest_from_selected_files(
+        #             video_paths=batch_video_paths,
+        #             labels=batch_labels
+        #         )
+        #
+        #         # 2. Use feature_processor to obtain features
+        #         f_art_b, f_lip_b = self.feature_processor.encode_manifest_for_eval(
+        #             batch_video_paths,
+        #             device=self.device
+        #         )
+        #
+        #         if isinstance(f_art_b, torch.Tensor):
+        #             all_f_art.append(f_art_b.detach().to(self.device))
+        #         if isinstance(f_lip_b, torch.Tensor):
+        #             all_f_lip.append(f_lip_b.detach().to(self.device))
+        #
+        # if not all_f_art or not all_f_lip:
+        #     raise RuntimeError("No features were produced by feature_processor; check inputs and processor.")
 
-        # 5. Compute similarity
-        similarity_matrix = self.compute_similarity(f_art_all, f_lip_all)
+        f_art = torch.cat(all_f_art, dim=0)
+        f_lip = torch.cat(all_f_lip, dim=0)
 
-        # 6. Only rank 0 saves plots
+        similarity_matrix = self.compute_similarity(f_art, f_lip)
+
         if self.rank == 0:
             recall_at_1 = self.retrieval.compute_recall_at_k(similarity_matrix, k=1)
-            print(f"Recall@1: {recall_at_1:.4f}")
+            print(f"[Eval] Recall@1: {recall_at_1:.4f}")
 
-            self.visualizer.visualize(
-                f_art_all.detach().cpu().numpy(),
-                f_lip_all.detach().cpu().numpy(),
-                save_path=t_sne_save_path
-            )
+            if f_art is not None and f_lip is not None:
+                self.visualizer.visualize(
+                    f_art.detach().cpu().numpy(),
+                    f_lip.detach().cpu().numpy(),
+                    save_path=t_sne_save_path
+                )
 
             self.retrieval.plot_similarity_matrix(
                 similarity_matrix.detach().cpu(),
                 save_path=retrieval_save_path
             )
 
-    # def encode_and_save_features_for_svm(
-    #     self,
-    #     model,
-    #     video_paths,
-    #     labels,
-    #     save_path_inference_svm,
-    #     preprocess_output_dir,
-    #     batch_size=128
-    # ):
-    #     """
-    #     Preprocess → extract features → encode → save audio/video features and metadata.
-    #     """
-    #     assert save_path_inference_svm is not None, "save_path_inference_svm must be specified"
-    #     assert self.feature_processor is not None, "feature_processor must be set in EvaluatorClass"
-    #     assert len(video_paths) == len(labels), "Mismatch between video_paths and labels"
-    #
-    #     if self.rank == 0:
-    #         print("🔁 Preprocessing videos before feature extraction...")
-    #         preprocess_videos_for_evaluation(video_paths, preprocess_output_dir, batch_size=batch_size)
-    #     torch.distributed.barrier()  # Sync across all ranks before continuing
-    #
-    #     model = model.to(self.device)
-    #     model.eval()
-    #
-    #     audio_output_dir = os.path.join(save_path_inference_svm, "audio")
-    #     video_output_dir = os.path.join(save_path_inference_svm, "video")
-    #     metadata_path = os.path.join(save_path_inference_svm, "metadata.csv")
-    #
-    #     os.makedirs(audio_output_dir, exist_ok=True)
-    #     os.makedirs(video_output_dir, exist_ok=True)
-    #     os.makedirs(os.path.dirname(metadata_path), exist_ok=True)
-    #
-    #     metadata = []
-    #     sample_idx = 0
-    #
-    #     with torch.no_grad():
-    #         audio_feats, video_feats = self.feature_processor.create_datasubset(
-    #             csv_path=None,
-    #             use_preprocessed=False,
-    #             video_paths=video_paths
-    #         )
-    #
-    #         if audio_feats is None or video_feats is None:
-    #             print("❌ Feature extraction failed. Exiting.")
-    #             return
-    #
-    #         audio_feats = audio_feats.to(self.device)
-    #         video_feats = video_feats.to(self.device)
-    #
-    #         f_art, f_lip = model(audio_features=audio_feats, video_features=video_feats)
-    #
-    #         for i in range(f_art.size(0)):
-    #             audio_feat = f_art[i].cpu().numpy()
-    #             video_feat = f_lip[i].cpu().numpy()
-    #             label = labels[i]
-    #
-    #             audio_path = os.path.join(audio_output_dir, f"audio_feat_{sample_idx}.npy")
-    #             video_path = os.path.join(video_output_dir, f"video_feat_{sample_idx}.npy")
-    #
-    #             np.save(audio_path, audio_feat)
-    #             np.save(video_path, video_feat)
-    #
-    #             metadata.append((audio_path, video_path, label))
-    #             sample_idx += 1
-    #
-    #     with open(metadata_path, "w") as f:
-    #         for audio_path, video_path, label in metadata:
-    #             f.write(f"{audio_path},{video_path},{label}\n")
-    #
-    #     if self.rank == 0:
-    #         print(f"[✓] Saved {sample_idx} encoded features")
-    #         print(f"[✓] Metadata saved to: {metadata_path}")
-    #
+        return {
+            "recall_at_1": float(recall_at_1),
+            "similarity_matrix": similarity_matrix.detach().cpu(),
+            "f_art": f_art.detach().cpu(),
+            "f_lip": f_lip.detach().cpu(),
+        }
 
+
+# ===========================
+# ADDED: Standalone wrapper
+# (No changes to existing logic. This simply instantiates EvaluatorClass
+#  and calls its existing evaluate_after_training method.)
+# ===========================
+def evaluate_model_standalone(
+    model,
+    video_paths,
+    labels,
+    feature_processor,
+    *,
+    device=None,
+    batch_size=128,
+    t_sne_save_path=None,
+    retrieval_save_path=None,
+    rank=0,
+    output_txt_path=None
+):
+    evaluator = EvaluatorClass(
+        rank=rank,
+        device=device or (torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")),
+        feature_processor=feature_processor,
+        output_txt_path=output_txt_path
+    )
+    return evaluator.evaluate_after_training(
+        model=model,
+        video_paths=video_paths,
+        labels=labels,
+        batch_size=batch_size,
+        t_sne_save_path=t_sne_save_path,
+        retrieval_save_path=retrieval_save_path
+    )

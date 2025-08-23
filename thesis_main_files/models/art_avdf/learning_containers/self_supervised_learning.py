@@ -38,7 +38,7 @@ class SelfSupervisedLearning(nn.Module):
         f_lip_prime_norm = F.normalize(f_lip, p=2, dim=1)
 
         # Adjust temperature dynamically
-        temperature = self.adjust_temperature(f_art, f_lip)
+        temperature = self.adjust_temperature(f_art, f_lip_prime_norm)
 
         # Compute similarity matrix
         similarity_matrix = torch.matmul(f_lip_prime_norm, f_art_norm.T)

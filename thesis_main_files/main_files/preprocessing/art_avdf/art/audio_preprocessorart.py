@@ -88,6 +88,7 @@ class AudioPreprocessor:
 
         return all_log_mel_specs, all_melody_features
 
+    #This function is used for main processing
     def main_processing_waveforms(self, video_paths, batch_size=32, save_path=None):
         log_mel_list, melody_list = self.process_waveforms(video_paths, batch_size=batch_size)
         concatenated_features = self.align_log_mel_by_melody(log_mel_list, melody_list)

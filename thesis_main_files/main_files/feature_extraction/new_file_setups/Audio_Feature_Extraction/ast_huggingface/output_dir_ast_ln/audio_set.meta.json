@@ -1,0 +1,38 @@
+{
+  "data_dir": "/Users/abhishekgupte_macbookpro/PycharmProjects/new_pitch_estimator_project/AST_MODEL_SETUP/new_updated_hope/video_dir_test",
+  "exts": [
+    ".mp4",
+    ".mov"
+  ],
+  "recursive": true,
+  "source_type": "video",
+  "model": "MIT/ast-finetuned-audioset-10-10-0.4593",
+  "sr": 16000,
+  "num_mel_bins": 128,
+  "max_length": 1024,
+  "hop_length": 160,
+  "hidden_size": 768,
+  "time_series": "yes",
+  "token_pool": "none",
+  "return_time_axis": true,
+  "center_time": false,
+  "fp16": false,
+  "feature_level": "LN-after-Attn (pre-FFN) on final block",
+  "output_shape": [
+    4,
+    101,
+    768
+  ],
+  "grid_info": {
+    "nf": 12,
+    "nt": 101,
+    "pf": 16,
+    "pt": 16,
+    "stride_f": 10.181818181818182,
+    "stride_t": 10.08,
+    "specials": 2,
+    "N": 1212,
+    "F": 128,
+    "T": 1024
+  }
+}
