@@ -1,0 +1,15 @@
+{
+  "feature_dim": 768,
+  "clip_len": 16,
+  "aggregate": "mean",
+  "sampling_interval_ms": 40.0,
+  "preserve_temporal": true,
+  "temporal_pool": true,
+  "total_videos": 4,
+  "video_paths": [
+    "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/main_files/feature_extraction/new_file_setups/Video_Feature_Extraction/mvitv2_torchvision/video_dir_test/two_real.mp4",
+    "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/main_files/feature_extraction/new_file_setups/Video_Feature_Extraction/mvitv2_torchvision/video_dir_test/three_real.mp4",
+    "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/main_files/feature_extraction/new_file_setups/Video_Feature_Extraction/mvitv2_torchvision/video_dir_test/two_fake.mp4",
+    "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/main_files/feature_extraction/new_file_setups/Video_Feature_Extraction/mvitv2_torchvision/video_dir_test/three_fake.mp4"
+  ]
+}

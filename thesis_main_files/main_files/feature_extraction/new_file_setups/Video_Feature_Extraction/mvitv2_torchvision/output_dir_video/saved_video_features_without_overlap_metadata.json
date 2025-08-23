@@ -1,0 +1,14 @@
+{
+  "feature_dim": 768,
+  "clip_len": 16,
+  "aggregate": "mean",
+  "sampling_interval_ms": 40.0,
+  "preserve_temporal": true,
+  "total_videos": 4,
+  "video_paths": [
+    "/Users/abhishekgupte_macbookpro/PycharmProjects/new_pitch_estimator_project/AST_MODEL_SETUP/new_updated_hope/video_dir_test/two_real.mp4",
+    "/Users/abhishekgupte_macbookpro/PycharmProjects/new_pitch_estimator_project/AST_MODEL_SETUP/new_updated_hope/video_dir_test/three_real.mp4",
+    "/Users/abhishekgupte_macbookpro/PycharmProjects/new_pitch_estimator_project/AST_MODEL_SETUP/new_updated_hope/video_dir_test/two_fake.mp4",
+    "/Users/abhishekgupte_macbookpro/PycharmProjects/new_pitch_estimator_project/AST_MODEL_SETUP/new_updated_hope/video_dir_test/three_fake.mp4"
+  ]
+}
