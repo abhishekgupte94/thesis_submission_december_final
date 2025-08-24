@@ -371,15 +371,15 @@ class TrainingPipeline:
             if self.writer is not None:
                 self.writer.add_scalar("train/loss_epoch", avg_loss, epoch + 1)
 
-            # if (epoch + 1) % 50 == 0 and dist.get_rank() == 0:
-            #     save_path = os.path.join(checkpoint_dir, f"art_checkpoint_epoch_{epoch + 1}.pt")
-            #     self.save_state(
-            #         model=self.model.module,
-            #         optimizer=self.optimizer,
-            #         current_epoch=epoch + 1,
-            #         current_loss=avg_loss,
-            #         save_path=save_path
-            #     )
+            if (epoch + 1) % 10 == 0 and dist.get_rank() == 0:
+                save_path = os.path.join(checkpoint_dir, f"ssl_checkpoint_epoch_{epoch + 1}.pt")
+                self.save_state(
+                    model=self.model.module,
+                    optimizer=self.optimizer,
+                    current_epoch=epoch + 1,
+                    current_loss=avg_loss,
+                    save_path=save_path
+                )
 
         if dist.get_rank() == 0:
             self.writer.close()
