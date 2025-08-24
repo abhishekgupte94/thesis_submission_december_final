@@ -472,6 +472,9 @@ class VideoAudioFeatureExtractor:
             return None
 
     def extract_audio_features(self, video_paths, batch_size,save_path = None):
+        print(f"🔊 [TRAINING] Starting audio extraction for {len(video_paths)} paths")
+        print(f"🔊 [TRAINING] First 3 paths: {video_paths[:3]}")
+
         try:
             items = self.audio_extractor.extract_from_paths(
                 video_paths,
@@ -479,10 +482,23 @@ class VideoAudioFeatureExtractor:
                 save_dir=self.audio_extractor.default_save_dir,
                 overwrite=False
             )
-            feats = [it["features"] for it in items]  # CPU tensors
-            shapes = {tuple(f.shape) for f in feats}
-            print(f"🔊 [DEBUG] Length of shapes: {len(shapes)}, Shapes: {shapes}")  # ← ADD THIS LINE
 
+            print(f"🔊 [TRAINING] extract_from_paths returned {len(items)} items")
+
+            # Debug items before feature extraction
+            for i, item in enumerate(items[:3]):
+                if item is None:
+                    print(f"🔊 [TRAINING] Item {i}: None")
+                else:
+                    print(
+                        f"🔊 [TRAINING] Item {i}: {type(item)}, keys: {list(item.keys()) if isinstance(item, dict) else 'not dict'}")
+
+            feats = [it["features"] for it in items]  # CPU tensors
+            print(f"🔊 [TRAINING] Feats extracted: {len(feats)}")
+            print(f"🔊 [TRAINING] Feat types: {[type(f) for f in feats[:3]]}")
+
+            shapes = {tuple(f.shape) for f in feats}
+            print(f"🔊 [TRAINING] Length of shapes: {len(shapes)}, Shapes: {shapes}")
             if len(shapes) == 1:
                 batch = torch.stack(feats, dim=0)
             else:
