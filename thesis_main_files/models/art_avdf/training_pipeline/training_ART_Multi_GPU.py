@@ -249,6 +249,7 @@ log_dir = f"runs/ssl_ddp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
 class TrainingPipeline:
     def __init__(self, dataset, batch_size, learning_rate, num_epochs, device, feature_processor, output_txt_path, local_rank):
+        self.device = torch.device(f'cuda:{local_rank}')
         if dist.is_initialized():
             ra = dist.get_rank()
             try:
@@ -259,7 +260,7 @@ class TrainingPipeline:
             print(f"[rank {ra}] trainer={self.device} | mvit={mvit_dev} | ast={ast_dev}")
 
         self.local_rank = local_rank
-        self.device = torch.device(f'cuda:{local_rank}')
+
         torch.cuda.set_device(self.device)
         log_dir = f"runs/ssl_ddp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
