@@ -1212,9 +1212,9 @@ class VideoAudioFeatureExtractor:
     Responsible for feature extraction from preprocessed video components and audio waveforms.
     """
     def __init__(self, device=None, amp=True, save_audio_feats=False, audio_save_dir=None):
-        dev = self.device
+        self.device = device
         self.mvit_adapter = MViTVideoFeatureExtractor(
-            device=dev,  # torch.device(f"cuda:{local_rank}")
+            device=self.device,  # torch.device(f"cuda:{local_rank}")
             amp=True,  # uses fp16 autocast in your _forward_model
             strict_temporal=False,  # set True to enforce equal T' within a batch
             save_video_feats=False,  # set True if you want .pt saved per sample
@@ -1224,7 +1224,7 @@ class VideoAudioFeatureExtractor:
             aggregate="mean"
         )
         self.audio_extractor = ASTAudioExtractor(
-            device=dev,
+            device=self.device,
             amp=amp,
             time_series=True,     # 'yes' by default
             token_pool="none",    # keep time series, no pooling
