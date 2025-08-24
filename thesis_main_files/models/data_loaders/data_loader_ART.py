@@ -1212,7 +1212,7 @@ class VideoAudioFeatureExtractor:
     Responsible for feature extraction from preprocessed video components and audio waveforms.
     """
     def __init__(self, device=None, amp=True, save_audio_feats=False, audio_save_dir=None):
-        dev = device or torch.device(f"cuda:{torch.cuda.current_device()}" if torch.cuda.is_available() else "cpu")
+        dev = self.device
         self.mvit_adapter = MViTVideoFeatureExtractor(
             device=dev,  # torch.device(f"cuda:{local_rank}")
             amp=True,  # uses fp16 autocast in your _forward_model
@@ -1282,7 +1282,9 @@ class VideoAudioFeatureProcessor:
         # self.video_feature_ext = VideoAudioFeatureExtractor()
         # self.video_feature_ext = mvit_extractor
         # self.component_extractor = VideoComponentExtractor()
-        self.feature_extractor = VideoAudioFeatureExtractor()  # pass rank device
+        torch.cuda.set_device(local_rank)
+        self.device = torch.device(f"cuda:{local_rank}")
+        self.feature_extractor = VideoAudioFeatureExtractor(device = self.device)  # pass rank device
         self.batch_size = batch_size
 
     def create_datasubset(self, csv_path, use_preprocessed=True, video_paths=None, audio_paths = None, video_save_dir=None, output_txt_file=None):

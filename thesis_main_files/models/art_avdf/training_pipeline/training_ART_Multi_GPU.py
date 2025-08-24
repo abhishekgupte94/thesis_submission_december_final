@@ -320,8 +320,8 @@ class TrainingPipeline:
             running_loss = 0.0
 
             for batch in self.dataloader:
-                video_paths = batch["video_path"].to(self.device, non_blocking=True)
-                labels = batch["label"].to(self.device, non_blocking=True)
+                video_paths = batch["video_path"]
+                labels = batch["label"]
                 processed_audio_features, processed_video_features = self.extract_features(video_paths)
                 # after extraction, force both onto the modelâ€™s device
 
