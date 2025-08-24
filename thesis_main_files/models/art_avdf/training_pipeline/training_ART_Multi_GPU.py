@@ -253,8 +253,8 @@ class TrainingPipeline:
         if dist.is_initialized():
             ra = dist.get_rank()
             try:
-                mvit_dev = feature_processor.mvit_adapter.device
-                ast_dev = feature_processor.audio_extractor.device
+                mvit_dev = feature_processor.device
+                ast_dev = feature_processor.device
             except Exception:
                 mvit_dev = ast_dev = "unknown"
             print(f"[rank {ra}] trainer={self.device} | mvit={mvit_dev} | ast={ast_dev}")
