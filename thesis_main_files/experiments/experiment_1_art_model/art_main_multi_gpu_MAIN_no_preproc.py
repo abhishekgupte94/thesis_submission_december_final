@@ -40,19 +40,18 @@ from thesis_main_files.models.art_avdf.evaluation_pipeline.evaluating_final_mode
 
 def setup_gpu_allocation(strategy="dedicated_video"):
     """
-    Simple GPU allocation setup
-    Returns: (video_gpu, audio_gpu, training_gpus_str)
+    BETTER: Returns physical GPU IDs and training GPU list
+    No CUDA_VISIBLE_DEVICES manipulation - let feature extractors access all GPUs
     """
     if strategy == "dedicated_video":
         # GPU 0: Video, GPU 1: Audio, GPUs 2-7: Training
-        return 0, 1, "2,3,4,5,6,7"
+        return 0, 1, [2, 3, 4, 5, 6, 7]
     elif strategy == "shared_video":
         # GPU 0: Video+Audio, GPUs 1-7: Training
-        return 0, 0, "1,2,3,4,5,6,7"
+        return 0, 0, [1, 2, 3, 4, 5, 6, 7]
     else:
         # Default: everything on available GPUs
-        return 0, 0, "0,1,2,3,4,5,6,7"
-# -------------------------------------------------------------------
+        return 0, 0, [0, 1, 2, 3, 4, 5, 6, 7]# -------------------------------------------------------------------
 # UPDATED: Resolve dataset paths based on mode flags (train/evaluate)
 # - For training: returns (csv_path, video_dir)
 # - For evaluation: returns (fake_csv_path, fake_video_dir, real_csv_path, real_video_dir)
@@ -124,13 +123,16 @@ def main():
 
     batch_size = args.batch_size
     # NEW: Setup GPU allocation
-    video_gpu, audio_gpu, training_gpus = setup_gpu_allocation(args.gpu_strategy)
+    # Setup GPU allocation
+    video_gpu, audio_gpu, training_gpu_list = setup_gpu_allocation(args.gpu_strategy)
+    world_size = len(training_gpu_list)
 
-    if args.verbose_gpu or args.train:  # Always show for training
+    if args.verbose_gpu or args.train:
         print(f"🔧 GPU Strategy: {args.gpu_strategy}")
-        print(f"📺 Video extraction: GPU {video_gpu}")
-        print(f"🔊 Audio extraction: GPU {audio_gpu}")
-        print(f"🏃 Training GPUs: {training_gpus}")
+        print(f"📺 Video extraction: Physical GPU {video_gpu}")
+        print(f"🔊 Audio extraction: Physical GPU {audio_gpu}")
+        print(f"🏃 Training GPUs: Physical GPUs {training_gpu_list}")
+        print(f"🎯 World size: {world_size}")
 
     # -------------------------------------------------------------------
     # STANDALONE EVALUATION MODE (no training)
@@ -147,10 +149,11 @@ def main():
         # NEW Create feature processor with dedicated GPUs
         feature_processor = VideoAudioFeatureProcessor(
             batch_size=args.batch_size,
-            video_gpu_id=video_gpu,
-            audio_gpu_id=audio_gpu,
+            video_gpu_id=video_gpu,  # Physical GPU 0
+            audio_gpu_id=audio_gpu,  # Physical GPU 1
             verbose=args.verbose_gpu
         )
+
         evaluator = EvaluationPipeline(
             dataset=dataset,
             batch_size=args.batch_size,
@@ -193,17 +196,32 @@ def main():
     # -------------------------------------------------------------------
     if args.train:
         # Set CUDA_VISIBLE_DEVICES for training processes
-        os.environ["CUDA_VISIBLE_DEVICES"] = training_gpus
-        print(f"🎯 Training will use GPUs: {training_gpus}")
+        # os.environ["CUDA_VISIBLE_DEVICES"] = training_gpus
+        # print(f"🎯 Training will use GPUs: {training_gpus}")
         # Reflect the new _resolve_dataset_paths(args) shape:
         # For training we get 2-tuple: (csv_path, video_dir)
-        csv_path, video_dir = _resolve_dataset_paths(args)
 
-        # ---------- TRAINING FLOW (DDP) ----------
+
+        print(f"🎯 All GPUs remain visible for feature extraction")
+        print(f"🏃 Training processes will map to physical GPUs: {training_gpu_list}")
+
+        # Get distributed training info
         local_rank = int(os.environ['LOCAL_RANK'])
-        torch.cuda.set_device(local_rank)
-        dist.init_process_group(backend='nccl')
+        world_size = len(training_gpu_list)
 
+        # ✅ BETTER: Map local_rank to actual physical GPU
+        if local_rank >= len(training_gpu_list):
+            raise ValueError(f"local_rank {local_rank} >= available training GPUs {len(training_gpu_list)}")
+
+        actual_training_gpu = training_gpu_list[local_rank]
+        print(f"🔥 Process {local_rank} mapped to physical GPU {actual_training_gpu}")
+
+        # Set the correct physical GPU for this training process
+        torch.cuda.set_device(actual_training_gpu)
+
+        # Initialize distributed training
+        dist.init_process_group(backend='nccl')
+        csv_path, video_dir = _resolve_dataset_paths(args)
         # Load dataset with provided csv
         dataset = VideoAudioDataset(csv_path=csv_path, video_dir=video_dir)
 
@@ -211,22 +229,24 @@ def main():
         # feature_processor = VideoAudioFeatureProcessor(batch_size=batch_size)
         # NEW Create feature processor with dedicated GPUs
         # NOTE: video_gpu and audio_gpu are PHYSICAL GPU IDs (outside CUDA_VISIBLE_DEVICES)
+        # ✅ BETTER: Feature processor can access physical GPUs 0 and 1
         feature_processor = VideoAudioFeatureProcessor(
-            batch_size=batch_size,
-            video_gpu_id=video_gpu,  # Physical GPU 0
-            audio_gpu_id=audio_gpu,  # Physical GPU 1
+            batch_size=args.batch_size,
+            video_gpu_id=video_gpu,    # Physical GPU 0 - accessible!
+            audio_gpu_id=audio_gpu,    # Physical GPU 1 - accessible!
             verbose=(args.verbose_gpu and local_rank == 0)
         )
-        # Initialize trainer
+
+        # ✅ BETTER: Trainer uses the actual physical GPU ID
         trainer = TrainingPipeline(
             dataset=dataset,
-            batch_size=batch_size,
+            batch_size=args.batch_size,
             learning_rate=1e-4,
             num_epochs=150,
-            device=torch.device(f"cuda:{local_rank}"),
+            device=torch.device(f"cuda:{actual_training_gpu}"),  # Physical GPU ID
             feature_processor=feature_processor,
             output_txt_path=None,
-            local_rank=local_rank
+            local_rank=local_rank  # Keep logical rank for DDP
         )
 
         # === CodeCarbon: start tracking for TRAINING (per-rank logs) ===
