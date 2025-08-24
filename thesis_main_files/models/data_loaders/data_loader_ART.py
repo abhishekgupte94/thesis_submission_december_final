@@ -506,7 +506,7 @@ class VideoAudioFeatureProcessor:
         # self.video_feature_ext = VideoAudioFeatureExtractor()
         # self.video_feature_ext = mvit_extractor
         # self.component_extractor = VideoComponentExtractor()
-        self.feature_extractor = VideoAudioFeatureExtractor(device=self.device)  # pass rank device
+        self.feature_extractor = VideoAudioFeatureExtractor()  # pass rank device
         self.batch_size = batch_size
 
     def create_datasubset(self, csv_path, use_preprocessed=True, video_paths=None, audio_paths = None, video_save_dir=None, output_txt_file=None):
