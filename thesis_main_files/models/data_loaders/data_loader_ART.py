@@ -430,31 +430,38 @@ def convert_paths_for_evaluation(fake_csv_name: str):
 #         except Exception as e:
 #             print(f"Error preprocessing video paths {video_paths}: {e}")
 #             return []
-
+## NEW fixed GPU code
 class VideoAudioFeatureExtractor:
-    """
-    Responsible for feature extraction from preprocessed video components and audio waveforms.
-    """
     def __init__(self, device=None, amp=True, save_audio_feats=False, audio_save_dir=None):
-        dev = device or torch.device(f"cuda:{torch.cuda.current_device()}" if torch.cuda.is_available() else "cpu")
+        # ✅ DEVICE-ONLY FIX: Proper device initialization
+        if device is None:
+            device = torch.device(f"cuda:{torch.cuda.current_device()}" if torch.cuda.is_available() else "cpu")
+        elif isinstance(device, str):
+            device = torch.device(device)
+        # device is now guaranteed to be a torch.device object
+        # END DEVICE FIX
+
         self.mvit_adapter = MViTVideoFeatureExtractor(
-            device=dev,  # torch.device(f"cuda:{local_rank}")
-            amp=True,  # uses fp16 autocast in your _forward_model
-            strict_temporal=False,  # set True to enforce equal T' within a batch
-            save_video_feats=False,  # set True if you want .pt saved per sample
-            save_dir=None,  # or a path to store .pt files
+            device=device,  # Pass the properly initialized device
+            amp=True,
+            strict_temporal=False,
+            save_video_feats=False,
+            save_dir=None,
             preserve_temporal=True,
             temporal_pool=True,
             aggregate="mean"
         )
+
         self.audio_extractor = ASTAudioExtractor(
-            device=device,
+            device=device,  # Pass the same device
             amp=amp,
-            time_series=True,     # 'yes' by default
-            token_pool="none",    # keep time series, no pooling
+            time_series=True,
+            token_pool="none",
             verbose=False,
             default_save_dir=(audio_save_dir if save_audio_feats else None),
         )
+
+    # ... [Keep all other methods unchanged] ...
     def extract_video_features(self, video_paths):
         try:
             # our MViT adapter exposes .execute(video_paths)
@@ -484,66 +491,149 @@ class VideoAudioFeatureExtractor:
             print(f"[AudioFeat] Error on {len(video_paths)} paths, e.g. {video_paths[:3]}... | {type(e).__name__}: {e}")
             return None
 
+
 class VideoAudioFeatureProcessor:
     """
-    Combines component and feature extractors to produce a usable dataset.
+    MODIFIED: Now supports dedicated GPU allocation for feature extraction
     """
-    def __init__(self,batch_size):
-        # self.video_prep          rocess_dir = video_preprocess_dir
-        # self.feature_dir_vid = feature_dir_vid
 
-        # # Initialize the video preprocessor (FANET)
-        # self.video_preprocessor = VideoPreprocessor_PIPNet(
-        #     # batch_size=batch_size,
-        #     output_base_dir_real=video_save_dir,
-        #     real_output_txt_path=output_txt_file
-        # )
-
-        # Initialize audio preprocessor
-        # self.audio_preprocessor = AudioPreprocessor()
-
-        # Initialize feature extractor (Swin Transformer)
-        # self.video_feature_ext = VideoAudioFeatureExtractor()
-        # self.video_feature_ext = mvit_extractor
-        # self.component_extractor = VideoComponentExtractor()
-        self.feature_extractor = VideoAudioFeatureExtractor()  # pass rank device
+    def __init__(self, batch_size, video_gpu_id=0, audio_gpu_id=0, verbose=False):
         self.batch_size = batch_size
+        self.video_gpu_id = video_gpu_id
+        self.audio_gpu_id = audio_gpu_id
+        self.verbose = verbose
 
-    def create_datasubset(self, csv_path, use_preprocessed=True, video_paths=None, audio_paths = None, video_save_dir=None, output_txt_file=None):
+        # Create devices for dedicated extraction
+        self.video_device = torch.device(f"cuda:{video_gpu_id}")
+        self.audio_device = torch.device(f"cuda:{audio_gpu_id}")
+
+        if self.verbose:
+            print(f"🎬 Video extraction device: {self.video_device}")
+            print(f"🔊 Audio extraction device: {self.audio_device}")
+
+        # Force feature extractor to use dedicated GPUs
+        self.feature_extractor = VideoAudioFeatureExtractor(
+            device=self.video_device,
+            amp=True,
+            save_audio_feats=False,
+            audio_save_dir=None
+        )
+
+        # Override audio extractor device explicitly
+        self.feature_extractor.audio_extractor.device = self.audio_device
+
+    def create_datasubset(self, csv_path, use_preprocessed=True, video_paths=None,
+                          audio_paths=None, video_save_dir=None, output_txt_file=None):
+        """
+        MODIFIED: Enhanced with GPU switching and error handling
+        """
         processed_video_features = None
         processed_audio_features = None
         video_error = False
         audio_error = False
 
-        # try:
-        #     # Extract components from raw videos
-        #     preprocessed_video_paths = self.component_extractor.extract_video_components(
-        #         video_paths, video_save_dir, output_txt_file, self.batch_size, self.video_preprocessor)
-        # except Exception as e:
-        #     print(f"Video Component Extraction Error: {e}")
-        #     video_error = True
+        # Temporary GPU context switching for extraction
+        original_device = torch.cuda.current_device()
 
         try:
-            # Extract features from video if component extraction succeeded
-            # if not video_error:
+            # Extract video features on dedicated video GPU
+            torch.cuda.set_device(self.video_device)
             processed_video_features = self.feature_extractor.extract_video_features(video_paths)
+
+            if processed_video_features is not None:
+                # Move to CPU to avoid cross-GPU transfer issues
+                processed_video_features = processed_video_features.cpu()
+
         except Exception as e:
-            print(f"Video Feature Extraction Error: {e}")
+            print(f"❌ Video feature extraction error on {self.video_device}: {e}")
             video_error = True
 
         try:
-            # Extract audio features using video file paths
-            processed_audio_features = self.feature_extractor.extract_audio_features(video_paths, self.batch_size)
+            # Extract audio features on dedicated audio GPU
+            torch.cuda.set_device(self.audio_device)
+            processed_audio_features = self.feature_extractor.extract_audio_features(
+                video_paths, self.batch_size
+            )
+
+            if processed_audio_features is not None:
+                # Move to CPU to avoid cross-GPU transfer issues
+                processed_audio_features = processed_audio_features.cpu()
+
         except Exception as e:
-            print(f"Audio Feature Extraction Error: {e}")
+            print(f"❌ Audio feature extraction error on {self.audio_device}: {e}")
             audio_error = True
+
+        # Restore original GPU context
+        torch.cuda.set_device(original_device)
 
         # Return features only if both succeeded
         if not audio_error and not video_error:
             return processed_audio_features, processed_video_features
         else:
-            print("Errors encountered. No features returned.")
+            print("⚠️  Feature extraction errors encountered. Returning None.")
             return None, None
+
+######## OLD PRE-GPU STRATEGY CLASS
+# class VideoAudioFeatureProcessor:
+#     """
+#     Combines component and feature extractors to produce a usable dataset.
+#     """
+#     def __init__(self,batch_size):
+#         # self.video_prep          rocess_dir = video_preprocess_dir
+#         # self.feature_dir_vid = feature_dir_vid
+#
+#         # # Initialize the video preprocessor (FANET)
+#         # self.video_preprocessor = VideoPreprocessor_PIPNet(
+#         #     # batch_size=batch_size,
+#         #     output_base_dir_real=video_save_dir,
+#         #     real_output_txt_path=output_txt_file
+#         # )
+#
+#         # Initialize audio preprocessor
+#         # self.audio_preprocessor = AudioPreprocessor()
+#
+#         # Initialize feature extractor (Swin Transformer)
+#         # self.video_feature_ext = VideoAudioFeatureExtractor()
+#         # self.video_feature_ext = mvit_extractor
+#         # self.component_extractor = VideoComponentExtractor()
+#         self.feature_extractor = VideoAudioFeatureExtractor()  # pass rank device
+#         self.batch_size = batch_size
+#
+#     def create_datasubset(self, csv_path, use_preprocessed=True, video_paths=None, audio_paths = None, video_save_dir=None, output_txt_file=None):
+#         processed_video_features = None
+#         processed_audio_features = None
+#         video_error = False
+#         audio_error = False
+#
+#         # try:
+#         #     # Extract components from raw videos
+#         #     preprocessed_video_paths = self.component_extractor.extract_video_components(
+#         #         video_paths, video_save_dir, output_txt_file, self.batch_size, self.video_preprocessor)
+#         # except Exception as e:
+#         #     print(f"Video Component Extraction Error: {e}")
+#         #     video_error = True
+#
+#         try:
+#             # Extract features from video if component extraction succeeded
+#             # if not video_error:
+#             processed_video_features = self.feature_extractor.extract_video_features(video_paths)
+#         except Exception as e:
+#             print(f"Video Feature Extraction Error: {e}")
+#             video_error = True
+#
+#         try:
+#             # Extract audio features using video file paths
+#             processed_audio_features = self.feature_extractor.extract_audio_features(video_paths, self.batch_size)
+#         except Exception as e:
+#             print(f"Audio Feature Extraction Error: {e}")
+#             audio_error = True
+#
+#         # Return features only if both succeeded
+#         if not audio_error and not video_error:
+#             return processed_audio_features, processed_video_features
+#         else:
+#             print("Errors encountered. No features returned.")
+#             return None, None
 
 ###############################################################################
 # DATASET CLASS

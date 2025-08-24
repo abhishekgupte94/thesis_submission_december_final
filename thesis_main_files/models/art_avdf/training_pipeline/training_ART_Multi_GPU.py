@@ -65,13 +65,32 @@ class TrainingPipeline:
         log_dir = f"runs/ssl_ddp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         self.writer = SummaryWriter(log_dir=log_dir)
 
+    # def extract_features(self, video_paths):
+    #     processed_audio_features, processed_video_features = self.feature_processor.create_datasubset(
+    #         csv_path=None,
+    #         use_preprocessed=False,
+    #         video_paths=video_paths
+    #     )
+    #     return processed_audio_features, processed_video_features
+
     def extract_features(self, video_paths):
+        """
+        ENHANCED: Better error handling and device management for cross-GPU feature extraction
+        """
         processed_audio_features, processed_video_features = self.feature_processor.create_datasubset(
             csv_path=None,
             use_preprocessed=False,
             video_paths=video_paths
         )
+
+        # Move features to training device if extraction succeeded
+        if processed_audio_features is not None and processed_video_features is not None:
+            # Features come back on CPU, move to training device
+            processed_audio_features = processed_audio_features.to(self.device, non_blocking=True)
+            processed_video_features = processed_video_features.to(self.device, non_blocking=True)
+
         return processed_audio_features, processed_video_features
+
 
     def train(self, checkpoint_dir):
         self.model.train()
@@ -82,47 +101,85 @@ class TrainingPipeline:
             self.sampler.set_epoch(epoch)
             running_loss = 0.0
 
-            for batch in self.dataloader:
-                video_paths = batch["video_path"]  # List[str]
-                labels = batch["label"]  # List[int] or tensor
+            # for batch in self.dataloader:
+            #     video_paths = batch["video_path"]  # List[str]
+            #     labels = batch["label"]  # List[int] or tensor
+            #     processed_audio_features, processed_video_features = self.extract_features(video_paths)
+            #     # after extraction, force both onto the model’s device
+            #
+            #     if processed_audio_features is None or processed_video_features is None:
+            #         print("Skipping batch due to feature extraction failure.")
+            #         continue
+            #     processed_audio_features = processed_audio_features.to(self.device, non_blocking=True)
+            #     processed_video_features = processed_video_features.to(self.device, non_blocking=True)
+            #
+            #     self.optimizer.zero_grad()
+            #
+            #     # 🔄 CHANGE: GPUOptimizedAlignment outputs a dict
+            #     output = self.model(
+            #         audio_features=processed_audio_features,
+            #         video_features=processed_video_features
+            #     )
+            #
+            #     # Global pooled features for loss
+            #     audio_global = output['audio_aligned'].mean(dim=1)  # [B, 512]
+            #     video_global = output['video_aligned'].mean(dim=1)  # [B, 512]
+            #
+            #     # 🔄 CHANGE: use SelfSupervisedAVLoss
+            #     loss = self.loss_fn(audio_global, video_global)
+            #
+            #     loss.backward()
+            #     self.optimizer.step()
+            #     if self.writer is not None:
+            #         self.writer.add_scalar("train/loss_step", loss.item(), global_step)
+            #         for i, pg in enumerate(self.optimizer.param_groups):
+            #             self.writer.add_scalar(f"train/lr_group_{i}", pg["lr"], global_step)
+            #
+            #     running_loss += loss.item()
+            #
+            #     if dist.get_rank() == 0:
+            #         self.writer.add_scalar("Loss/train", loss.item(), global_step)
+            #
+            #     global_step += 1
+            ### NEW GPU LOGIC
+            for batch_idx, batch in enumerate(self.dataloader):
+                video_paths = batch["video_path"]
+                labels = batch["label"]
+
                 processed_audio_features, processed_video_features = self.extract_features(video_paths)
-                # after extraction, force both onto the model’s device
 
                 if processed_audio_features is None or processed_video_features is None:
-                    print("Skipping batch due to feature extraction failure.")
+                    if dist.get_rank() == 0:
+                        print(f"⏭️  Skipping batch {batch_idx} due to feature extraction failure.")
                     continue
-                processed_audio_features = processed_audio_features.to(self.device, non_blocking=True)
-                processed_video_features = processed_video_features.to(self.device, non_blocking=True)
 
                 self.optimizer.zero_grad()
 
-                # 🔄 CHANGE: GPUOptimizedAlignment outputs a dict
                 output = self.model(
                     audio_features=processed_audio_features,
                     video_features=processed_video_features
                 )
 
                 # Global pooled features for loss
-                audio_global = output['audio_aligned'].mean(dim=1)  # [B, 512]
-                video_global = output['video_aligned'].mean(dim=1)  # [B, 512]
+                audio_global = output['audio_aligned'].mean(dim=1)
+                video_global = output['video_aligned'].mean(dim=1)
 
-                # 🔄 CHANGE: use SelfSupervisedAVLoss
                 loss = self.loss_fn(audio_global, video_global)
-
                 loss.backward()
                 self.optimizer.step()
+
+                running_loss += loss.item()
+
                 if self.writer is not None:
                     self.writer.add_scalar("train/loss_step", loss.item(), global_step)
                     for i, pg in enumerate(self.optimizer.param_groups):
                         self.writer.add_scalar(f"train/lr_group_{i}", pg["lr"], global_step)
 
-                running_loss += loss.item()
-
-                if dist.get_rank() == 0:
-                    self.writer.add_scalar("Loss/train", loss.item(), global_step)
-
                 global_step += 1
 
+                # Periodic performance reporting
+                if batch_idx % 50 == 0 and dist.get_rank() == 0:
+                    print(f"📊 Batch {batch_idx}: Loss={loss.item():.4f}")
                 # 🔒 Commented out evaluator for now
                 # if (epoch + 1) % 50 == 0 and dist.get_rank() == 0:
                 #     save_path_tsne = os.path.join(checkpoint_dir, f"t_sne_{epoch + 1}.png")

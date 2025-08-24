@@ -673,29 +673,32 @@ def _atomic_torch_save(obj: dict, out_path: Path) -> None:
             pass
         raise
 
+## NEW fixed GPU code
 class ASTAudioExtractor:
-    """
-    Importable audio feature extractor (AST) that mirrors the video-side storehouse.
-    - Leaves existing helpers untouched (tokens_to_time_series_auto, etc.)
-    - Removes the need for a main() CLI; can be used from other modules
-    - Returns time-series features (B, T', D) by default
-    - GPU/AMP friendly; returns CPU tensors for saving/consumption
-    - Optional per-sample torch .pt saving
-    """
     def __init__(
-        self,
-        model_name: str = "MIT/ast-finetuned-audioset-10-10-0.4593",
-        device: str | torch.device = "cuda",
-        amp: bool = True,
-        time_series: bool = True,           # default 'yes'
-        token_pool: str = "none",           # ignored when time_series=True
-        sampling_rate: int = 16000,
-        n_mels: int = 128,
-        max_length: int = 1024,
-        verbose: bool = False,
-        default_save_dir: Optional[str] = None,
+            self,
+            model_name: str = "MIT/ast-finetuned-audioset-10-10-0.4593",
+            device: str | torch.device = "cuda",
+            amp: bool = True,
+            time_series: bool = True,
+            token_pool: str = "none",
+            sampling_rate: int = 16000,
+            n_mels: int = 128,
+            max_length: int = 1024,
+            verbose: bool = False,
+            default_save_dir: Optional[str] = None,
     ):
-        self.device = torch.device(device)
+        # ✅ DEVICE-ONLY FIX: Proper device initialization
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        if isinstance(device, str):
+            self.device = torch.device(device)
+        elif isinstance(device, torch.device):
+            self.device = device
+        else:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # END DEVICE FIX
+
         self.use_amp = bool(amp)
         self.time_series = bool(time_series)
         self.token_pool = token_pool
@@ -716,6 +719,8 @@ class ASTAudioExtractor:
         self.model = ASTModel.from_pretrained(model_name)
         self.model.eval().to(self.device)
         torch.set_grad_enabled(False)
+
+    # ... [Keep all other methods unchanged] ...
 
     # ---- I/O helpers (demux & collate) ----
     def _demux_video_to_wav(self, video_path: str, mono: bool = True) -> np.ndarray:

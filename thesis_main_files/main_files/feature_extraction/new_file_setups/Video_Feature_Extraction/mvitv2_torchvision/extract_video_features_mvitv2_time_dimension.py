@@ -166,33 +166,36 @@ def infer_thw_from_model_and_input(model: nn.Module, T_in: int, H_in: int, W_in:
     return int(T), int(H), int(W)
 
 # ----------------- Extractor -----------------
-
+## NEW fixed GPU code
 class MViTv2FeatureExtractor:
-    """
-    MViTv2 feature extractor (TorchVision):
-      • CV2 sampling at ~25 fps (40 ms)
-      • Standard clipping: center (1) or uniform (>1)
-      • Official TV transforms (no custom mean/std)
-      • Dimensions/D handled from model config / runtime tensors (no magic numbers)
-      • Optional temporal pooling: (B, L, D) -> (B, T', D) by dropping CLS, mean over spatial grid
-    """
-
     def __init__(
-        self,
-        device: str = "cuda",
-        preserve_temporal: bool = True,
-        temporal_pool: bool = True,
-        aggregate: str = "none",
-        dtype: torch.dtype = torch.float32,
-        verbose: bool = False,
-        default_save_dir: Optional[str] = None,
+            self,
+            device: str = "cuda",
+            preserve_temporal: bool = True,
+            temporal_pool: bool = True,
+            aggregate: str = "none",
+            dtype: torch.dtype = torch.float32,
+            verbose: bool = False,
+            default_save_dir: Optional[str] = None,
     ):
         self.preserve_temporal = preserve_temporal
-        self.device = torch.device(device)
+
+        # ✅ DEVICE-ONLY FIX: Proper device initialization
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        if isinstance(device, str):
+            self.device = torch.device(device)
+        elif isinstance(device, torch.device):
+            self.device = device
+        else:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # END DEVICE FIX
+
         self.verbose = verbose
         self.dtype = dtype
         self.default_save_dir = Path(default_save_dir) if default_save_dir else None
         torch.set_grad_enabled(False)
+
         # Pretrained model + transforms
         self.weights = MViT_V2_S_Weights.KINETICS400_V1
         self.model = mvit_v2_s(weights=self.weights).to(self.device).eval()
@@ -213,6 +216,7 @@ class MViTv2FeatureExtractor:
         logger.info(f"Inferred feature_dim: {self.feature_dim}")
         logger.info(f"Inferred total stride: t={self.total_stride_t}, h={self.total_stride_h}, w={self.total_stride_w}")
 
+    # ... [Keep all other methods unchanged] ...
     def _register_hooks(self) -> None:
         def hook_fn(name: str):
             def hook(module, inputs, output):

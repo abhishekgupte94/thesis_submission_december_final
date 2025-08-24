@@ -37,6 +37,21 @@ from thesis_main_files.main_files.evaluation.art.evaluator import (
 from thesis_main_files.main_files.evaluation.art.evaluator import evaluate_model_standalone
 from thesis_main_files.models.art_avdf.evaluation_pipeline.evaluating_final_model import EvaluationPipeline
 
+
+def setup_gpu_allocation(strategy="dedicated_video"):
+    """
+    Simple GPU allocation setup
+    Returns: (video_gpu, audio_gpu, training_gpus_str)
+    """
+    if strategy == "dedicated_video":
+        # GPU 0: Video, GPU 1: Audio, GPUs 2-7: Training
+        return 0, 1, "2,3,4,5,6,7"
+    elif strategy == "shared_video":
+        # GPU 0: Video+Audio, GPUs 1-7: Training
+        return 0, 0, "1,2,3,4,5,6,7"
+    else:
+        # Default: everything on available GPUs
+        return 0, 0, "0,1,2,3,4,5,6,7"
 # -------------------------------------------------------------------
 # UPDATED: Resolve dataset paths based on mode flags (train/evaluate)
 # - For training: returns (csv_path, video_dir)
@@ -81,7 +96,12 @@ def main():
     parser.add_argument('--evaluate', action='store_true', help='Run evaluation and exit')
     parser.add_argument('--train', action='store_true', help='Run training')
     parser.add_argument('--checkpoint', type=str, default=None, help='Optional checkpoint to load for evaluation')
-
+    # NEW: Add GPU allocation arguments
+    parser.add_argument('--gpu_strategy', type=str, default='dedicated_video',
+                        choices=['dedicated_video', 'shared_video', 'default'],
+                        help='GPU allocation strategy')
+    parser.add_argument('--verbose_gpu', action='store_true',
+                        help='Print GPU allocation info')
     args = parser.parse_args()
 
     # Default behavior: if neither flag is set, run training (preserves previous behavior)
@@ -103,6 +123,14 @@ def main():
     os.makedirs("carbon_logs_eval", exist_ok=True)
 
     batch_size = args.batch_size
+    # NEW: Setup GPU allocation
+    video_gpu, audio_gpu, training_gpus = setup_gpu_allocation(args.gpu_strategy)
+
+    if args.verbose_gpu or args.train:  # Always show for training
+        print(f"🔧 GPU Strategy: {args.gpu_strategy}")
+        print(f"📺 Video extraction: GPU {video_gpu}")
+        print(f"🔊 Audio extraction: GPU {audio_gpu}")
+        print(f"🏃 Training GPUs: {training_gpus}")
 
     # -------------------------------------------------------------------
     # STANDALONE EVALUATION MODE (no training)
@@ -110,12 +138,19 @@ def main():
     if args.evaluate and not args.train:
         fake_csv_path, fake_video_dir, real_csv_path, real_video_dir = _resolve_dataset_paths(args)
 
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+        # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # NEW -  Use dedicated video GPU for evaluation
+        device = torch.device(f"cuda:{video_gpu}")
         # dataset + feature_processor: SAME pattern as training
         dataset = VideoAudioDataset(csv_path=fake_csv_path, video_dir=fake_video_dir)
-        feature_processor = VideoAudioFeatureProcessor(batch_size=args.batch_size)
-
+        # feature_processor = VideoAudioFeatureProcessor(batch_size=args.batch_size)
+        # NEW Create feature processor with dedicated GPUs
+        feature_processor = VideoAudioFeatureProcessor(
+            batch_size=args.batch_size,
+            video_gpu_id=video_gpu,
+            audio_gpu_id=audio_gpu,
+            verbose=args.verbose_gpu
+        )
         evaluator = EvaluationPipeline(
             dataset=dataset,
             batch_size=args.batch_size,
@@ -157,6 +192,9 @@ def main():
     # TRAINING MODE (gated behind --train)
     # -------------------------------------------------------------------
     if args.train:
+        # Set CUDA_VISIBLE_DEVICES for training processes
+        os.environ["CUDA_VISIBLE_DEVICES"] = training_gpus
+        print(f"🎯 Training will use GPUs: {training_gpus}")
         # Reflect the new _resolve_dataset_paths(args) shape:
         # For training we get 2-tuple: (csv_path, video_dir)
         csv_path, video_dir = _resolve_dataset_paths(args)
@@ -170,8 +208,15 @@ def main():
         dataset = VideoAudioDataset(csv_path=csv_path, video_dir=video_dir)
 
         # Feature processor
-        feature_processor = VideoAudioFeatureProcessor(batch_size=batch_size)
-
+        # feature_processor = VideoAudioFeatureProcessor(batch_size=batch_size)
+        # NEW Create feature processor with dedicated GPUs
+        # NOTE: video_gpu and audio_gpu are PHYSICAL GPU IDs (outside CUDA_VISIBLE_DEVICES)
+        feature_processor = VideoAudioFeatureProcessor(
+            batch_size=batch_size,
+            video_gpu_id=video_gpu,  # Physical GPU 0
+            audio_gpu_id=audio_gpu,  # Physical GPU 1
+            verbose=(args.verbose_gpu and local_rank == 0)
+        )
         # Initialize trainer
         trainer = TrainingPipeline(
             dataset=dataset,
