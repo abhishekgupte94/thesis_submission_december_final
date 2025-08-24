@@ -489,7 +489,7 @@ class VideoAudioFeatureProcessor:
     Combines component and feature extractors to produce a usable dataset.
     """
     def __init__(self,batch_size):
-        self.video_preprocess_dir = video_preprocess_dir
+        # self.video_prep          rocess_dir = video_preprocess_dir
         # self.feature_dir_vid = feature_dir_vid
 
         # # Initialize the video preprocessor (FANET)
