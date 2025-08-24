@@ -569,7 +569,7 @@ class VideoAudioDataset(Dataset):
         self.transform = transform
 
         # Use helper to build paths + labels
-        self.video_paths, self.labels = create_file_paths_for_training(self.csv_path, self.video_dir)
+        self.video_paths, self.labels = create_file_paths_for_train(self.csv_path, self.video_dir)
 
         assert len(self.video_paths) == len(self.labels), (
             f"Mismatch between number of files ({len(self.video_paths)}) "
