@@ -1282,7 +1282,7 @@ class VideoAudioFeatureProcessor:
         # self.video_feature_ext = VideoAudioFeatureExtractor()
         # self.video_feature_ext = mvit_extractor
         # self.component_extractor = VideoComponentExtractor()
-        torch.cuda.set_device(local_rank)
+        # torch.cuda.set_device(local_rank)
         self.device = torch.device(f"cuda:{local_rank}")
         self.feature_extractor = VideoAudioFeatureExtractor(device = self.device)  # pass rank device
         self.batch_size = batch_size
