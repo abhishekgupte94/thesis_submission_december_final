@@ -135,7 +135,7 @@ class TrainingPipeline:
                 self.writer.add_scalar("train/loss_epoch", avg_loss, epoch + 1)
 
             if (epoch + 1) % 50 == 0 and dist.get_rank() == 0:
-                save_path = os.path.join(checkpoint_dir, f"art_checkpoint_epoch_{epoch + 1}.pt")
+                save_path = os.path.join(checkpoint_dir, f"art/_checkpoint_epoch_{epoch + 1}.pt")
                 self.save_state(
                     model=self.model.module,
                     optimizer=self.optimizer,
