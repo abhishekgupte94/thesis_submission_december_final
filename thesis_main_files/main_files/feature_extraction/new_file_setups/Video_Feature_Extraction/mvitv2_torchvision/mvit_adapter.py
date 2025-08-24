@@ -57,7 +57,7 @@ class MViTVideoFeatureExtractor:
 
         feats = [r["features"] for r in results]  # list of CPU tensors
         shapes = {tuple(f.shape) for f in feats}
-
+        print("Vid Feat Execute stage reached!")
         if len(shapes) == 1:
             batch = torch.stack(feats, dim=0)  # (B, D) or (B, T', D)
         else:

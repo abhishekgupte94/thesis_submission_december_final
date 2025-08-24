@@ -165,6 +165,64 @@ def infer_thw_from_model_and_input(model: nn.Module, T_in: int, H_in: int, W_in:
 
     return int(T), int(H), int(W)
 
+
+####Possible Decord workaround
+import numpy as np
+
+try:
+    from decord import VideoReader, cpu, gpu
+    _HAS_DECORD = True
+except Exception:
+    _HAS_DECORD = False
+
+def _decord_ctx(self):
+    if _HAS_DECORD and getattr(self, "use_gpu_decode", True):
+        try:
+            return gpu(int(getattr(self, "gpu_decode_id", 0)))  # e.g., local_rank
+        except Exception:
+            pass
+    return cpu(0)
+
+def _compute_indices_like_cv2(self, original_fps: float, total_frames: int, sampling_interval_ms: float):
+    target_fps = 1000.0 / sampling_interval_ms
+    if abs(original_fps - target_fps) < 0.1:
+        return list(range(total_frames))  # ALL frames
+    duration_ms = (total_frames / max(original_fps, 1e-6)) * 1000.0
+    num_target = int(duration_ms / sampling_interval_ms)
+    idxs = []
+    for i in range(num_target):
+        t_ms = i * sampling_interval_ms
+        idx = int((t_ms / 1000.0) * original_fps)
+        if idx < total_frames:
+            idxs.append(idx)
+    if not idxs:  # safety
+        idxs = [0]
+    return idxs
+
+def _sample_frames_decord_like_cv2(self, video_path: str, sampling_interval_ms: float, fallback_fps: float = 25.0):
+    if not _HAS_DECORD:
+        raise ImportError("Install decord (optionally decord-cuXYZ for GPU).")
+    ctx = self._decord_ctx()
+    vr = VideoReader(str(video_path), ctx=ctx)
+
+    total_frames = len(vr)
+    # Decord avg fps can be a fraction; fall back if missing/zero
+    try:
+        original_fps = float(vr.get_avg_fps()) or float(fallback_fps)
+    except Exception:
+        original_fps = float(fallback_fps)
+
+    frame_indices = self._compute_indices_like_cv2(original_fps, total_frames, sampling_interval_ms)
+
+    # Clamp to valid range and fetch in one call; Decord returns RGB uint8 (T,H,W,3)
+    max_idx = max(0, total_frames - 1)
+    safe_idx = [min(int(i), max_idx) for i in frame_indices]
+    batch = vr.get_batch(safe_idx).asnumpy()   # (T,H,W,3) RGB uint8
+    # Return the same type your pipeline expects: list of (H,W,3) uint8 frames
+    return [batch[t] for t in range(batch.shape[0])]
+#######
+
+
 # ----------------- Extractor -----------------
 ## NEW fixed GPU code
 class MViTv2FeatureExtractor:
@@ -563,26 +621,31 @@ class MViTv2FeatureExtractor:
         # 1) Decode & preprocess
         # ---------------------------
         p = Path(video_path)
-
-        # Decode frames with cv2 using your helper
-        cap = cv2.VideoCapture(str(p))
-        if not cap.isOpened():
-            raise RuntimeError(f"Failed to open video: {p}")
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        fps = float(cap.get(cv2.CAP_PROP_FPS)) if cap.get(cv2.CAP_PROP_FPS) else 0.0
-
-        # sample frames at ~25 fps (40 ms) just like elsewhere
-        frames = self._sample_frames_cv2(
-            cap=cap,
-            original_fps=fps if fps > 0 else 25.0,
-            sampling_interval_ms=40.0,
-            total_frames=total_frames,
+        frames_rgb = self._sample_frames_decord_like_cv2(
+            video_path=str(video_path),
+            sampling_interval_ms=40.0  # or your variable sampling_interval_ms
         )
-        cap.release()
+
+        # # Decode frames with cv2 using your helper
+        # cap = cv2.VideoCapture(str(p))
+        # if not cap.isOpened():
+        #     raise RuntimeError(f"Failed to open video: {p}")
+        # total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        # fps = float(cap.get(cv2.CAP_PROP_FPS)) if cap.get(cv2.CAP_PROP_FPS) else 0.0
+        #
+        # # sample frames at ~25 fps (40 ms) just like elsewhere
+        # frames = self._sample_frames_cv2(
+        #     cap=cap,
+        #     original_fps=fps if fps > 0 else 25.0,
+        #     sampling_interval_ms=40.0,
+        #     total_frames=total_frames,
+        # )
+        # cap.release()
 
         # to (T, C, H, W) uint8
-        vt_tchw = self._frames_to_tensor(frames)
-
+        # vt_tchw = self._frames_to_tensor(frames)
+        ### Decord workaround
+        vt_tchw = self._frames_to_tensor(frames_rgb)
         # ensure we have at least clip_len frames and pick a center clip
         clip_len = 16
         vt_tchw = self._pad_short_video(vt_tchw, clip_len=clip_len)
