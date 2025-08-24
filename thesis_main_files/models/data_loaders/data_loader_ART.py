@@ -418,18 +418,18 @@
 # # COMPONENT + FEATURE EXTRACTION CLASSES (Audio restored via video paths)
 # ###############################################################################
 #
-# # class VideoComponentExtractor:
-# #     """
-# #     Handles raw video component extraction using the FANET video preprocessor.
-# #     """
-# #     def extract_video_components(self, video_paths, video_save_dir, output_txt_file, batch_size, video_preprocessor):
-# #         try:
-# #             # Process video paths using preprocessor
-# #             return_paths = video_preprocessor.parallel_main(video_paths)
-# #             return return_paths.copy()
-# #         except Exception as e:
-# #             print(f"Error preprocessing video paths {video_paths}: {e}")
-# #             return []
+# class VideoComponentExtractor:
+#     """
+#     Handles raw video component extraction using the FANET video preprocessor.
+#     """
+#     def extract_video_components(self, video_paths, video_save_dir, output_txt_file, batch_size, video_preprocessor):
+#         try:
+#             # Process video paths using preprocessor
+#             return_paths = video_preprocessor.parallel_main(video_paths)
+#             return return_paths.copy()
+#         except Exception as e:
+#             print(f"Error preprocessing video paths {video_paths}: {e}")
+#             return []
 # ## NEW fixed GPU code
 # class VideoAudioFeatureExtractor:
 #     def __init__(self, device=None, amp=True, save_audio_feats=False, audio_save_dir=None):
@@ -1265,7 +1265,7 @@ class VideoAudioFeatureProcessor:
     Combines component and feature extractors to produce a usable dataset.
     """
     def __init__(self,batch_size):
-        self.video_preprocess_dir = video_preprocess_dir
+        # self.video_preprocess_dir = video_preprocess_dir
         # self.feature_dir_vid = feature_dir_vid
 
         # # Initialize the video preprocessor (FANET)
@@ -1282,7 +1282,7 @@ class VideoAudioFeatureProcessor:
         # self.video_feature_ext = VideoAudioFeatureExtractor()
         # self.video_feature_ext = mvit_extractor
         # self.component_extractor = VideoComponentExtractor()
-        self.feature_extractor = VideoAudioFeatureExtractor(device=self.device)  # pass rank device
+        self.feature_extractor = VideoAudioFeatureExtractor()  # pass rank device
         self.batch_size = batch_size
 
     def create_datasubset(self, csv_path, use_preprocessed=True, video_paths=None, audio_paths = None, video_save_dir=None, output_txt_file=None):
