@@ -6,6 +6,10 @@ import torch.optim as optim
 import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler
 from torch.utils.tensorboard import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
+
+log_dir = f"runs/ssl_ddp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+# self.writer = SummaryWriter(log_dir=log_dir) if dist.get_rank() == 0 else None
 
 from thesis_main_files.models.art_avdf.art_main_module.art_model import ARTModule
 from thesis_main_files.models.art_avdf.learning_containers.self_supervised_learning import SelfSupervisedLearning
@@ -16,12 +20,16 @@ from thesis_main_files.utils.files_imp import create_manifest_from_selected_file
 # from pyJoules.handler.csv_handler import CSVHandler
 from thesis_main_files.models.art_avdf.encoders.new_encoder_for_ssl.complete_pipeline_cpu import CPUOptimizedAlignment
 from thesis_main_files.models.art_avdf.encoders.new_encoder_for_ssl.alignment_pipeline_gpu import GPUOptimizedAlignment, SelfSupervisedAVLoss
+log_dir = f"runs/ssl_ddp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
 class TrainingPipeline:
     def __init__(self, dataset, batch_size, learning_rate, num_epochs, device, feature_processor, output_txt_path, local_rank):
         self.local_rank = local_rank
         self.device = torch.device(f'cuda:{local_rank}')
         torch.cuda.set_device(self.device)
+        log_dir = f"runs/ssl_ddp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+        self.writer = SummaryWriter(log_dir=log_dir) if dist.get_rank() == 0 else None
 
         # 🔄 CHANGE: use GPUOptimizedAlignment instead of ARTModule
         self.model = GPUOptimizedAlignment(
@@ -74,12 +82,17 @@ class TrainingPipeline:
             self.sampler.set_epoch(epoch)
             running_loss = 0.0
 
-            for video_paths, audio_paths, labels in self.dataloader:
+            for batch in self.dataloader:
+                video_paths = batch["video_path"]  # List[str]
+                labels = batch["label"]  # List[int] or tensor
                 processed_audio_features, processed_video_features = self.extract_features(video_paths)
+                # after extraction, force both onto the model’s device
 
                 if processed_audio_features is None or processed_video_features is None:
                     print("Skipping batch due to feature extraction failure.")
                     continue
+                processed_audio_features = processed_audio_features.to(self.device, non_blocking=True)
+                processed_video_features = processed_video_features.to(self.device, non_blocking=True)
 
                 self.optimizer.zero_grad()
 
@@ -98,6 +111,10 @@ class TrainingPipeline:
 
                 loss.backward()
                 self.optimizer.step()
+                if self.writer is not None:
+                    self.writer.add_scalar("train/loss_step", loss.item(), global_step)
+                    for i, pg in enumerate(self.optimizer.param_groups):
+                        self.writer.add_scalar(f"train/lr_group_{i}", pg["lr"], global_step)
 
                 running_loss += loss.item()
 
@@ -114,6 +131,8 @@ class TrainingPipeline:
 
             avg_loss = running_loss / len(self.dataloader)
             print(f"Epoch [{epoch + 1}/{self.num_epochs}], Loss: {avg_loss:.4f}")
+            if self.writer is not None:
+                self.writer.add_scalar("train/loss_epoch", avg_loss, epoch + 1)
 
             if (epoch + 1) % 50 == 0 and dist.get_rank() == 0:
                 save_path = os.path.join(checkpoint_dir, f"art_checkpoint_epoch_{epoch + 1}.pt")

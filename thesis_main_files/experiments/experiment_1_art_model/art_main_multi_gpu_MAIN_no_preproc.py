@@ -194,6 +194,7 @@ def main():
             # If you prefer to log only on rank 0, move tracker construction
             # under `if dist.get_rank() == 0:` and set train_log_dir = "carbon_logs_training".
         )
+
         tracker.start()
         try:
             # Start training

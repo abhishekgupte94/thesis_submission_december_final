@@ -2,14 +2,15 @@
 from torch.utils.data import Dataset
 import torch
 from torch.utils.tensorboard.summary import video
+# from torch.utils.tensorboard import SummaryWriter
 
 # Importing required modules for video/audio preprocessing and feature extraction
-from thesis_main_files.main_files.preprocessing.art_avdf.art.video_preprocessor_SAVE_FILES_MULTI_GPU import  parallel_main
+# from thesis_main_files.main_files.preprocessing.art_avdf.art.video_preprocessor_SAVE_FILES_MULTI_GPU import  parallel_main
 from thesis_main_files.main_files.feature_extraction.new_file_setups.Video_Feature_Extraction.mvitv2_torchvision.mvit_adapter import MViTVideoFeatureExtractor
 # from thesis_main_files.main_files.feature_extraction.art_avdf.art.feature_extractor_ART_Video import SWIN_EXECUTOR as VideoFeatureExtractor
-from thesis_main_files.main_files.preprocessing.art_avdf.art.audio_preprocessorart import AudioPreprocessor
+# from thesis_main_files.main_files.preprocessing.art_avdf.art.audio_preprocessorart import AudioPreprocessor
 # from thesis_main_files.main_files.preprocessing.art_avdf.art.video_preprocessorart_Fanet_gpu import VideoPreprocessor_FANET
-from thesis_main_files.main_files.preprocessing.art_avdf.art.video_preprocessor_SAVE_FILES_MULTI_GPU import parallel_main
+# from thesis_main_files.main_files.preprocessing.art_avdf.art.video_preprocessor_SAVE_FILES_MULTI_GPU import parallel_main
 from thesis_main_files.main_files.feature_extraction.new_file_setups.Audio_Feature_Extraction.ast_huggingface.extract_audio_features_from_AST import ASTAudioExtractor
 
 from pathlib import Path
@@ -434,16 +435,17 @@ class VideoAudioFeatureExtractor:
     """
     Responsible for feature extraction from preprocessed video components and audio waveforms.
     """
-    def __init__(self):
+    def __init__(self, device=None, amp=True, save_audio_feats=False, audio_save_dir=None):
+        dev = device or torch.device(f"cuda:{torch.cuda.current_device()}" if torch.cuda.is_available() else "cpu")
         self.mvit_adapter = MViTVideoFeatureExtractor(
-            device=torch.device(f"cuda:{torch.cuda.current_device()}"),  # torch.device(f"cuda:{local_rank}")
+            device=dev,  # torch.device(f"cuda:{local_rank}")
             amp=True,  # uses fp16 autocast in your _forward_model
             strict_temporal=False,  # set True to enforce equal T' within a batch
             save_video_feats=False,  # set True if you want .pt saved per sample
             save_dir=None,  # or a path to store .pt files
             preserve_temporal=True,
             temporal_pool=True,
-            aggregate="none"
+            aggregate="mean"
         )
         self.audio_extractor = ASTAudioExtractor(
             device=device,
@@ -459,7 +461,7 @@ class VideoAudioFeatureExtractor:
             features = self.mvit_adapter.execute(video_paths)
             return features
         except Exception as e:
-            print(f"Video feature extraction error: {e}")
+            print(f"[VideoFeat] Error on {len(video_paths)} paths, e.g. {video_paths[:3]}... | {type(e).__name__}: {e}")
             return None
 
     def extract_audio_features(self, video_paths, batch_size,save_path = None):
@@ -479,7 +481,7 @@ class VideoAudioFeatureExtractor:
             # put on the same device as the extractor (trainer’s rank)
             return batch.to(self.audio_extractor.device, non_blocking=True)
         except Exception as e:
-            print(f"Audio Feature Extraction Error: {e}")
+            print(f"[AudioFeat] Error on {len(video_paths)} paths, e.g. {video_paths[:3]}... | {type(e).__name__}: {e}")
             return None
 
 class VideoAudioFeatureProcessor:
@@ -504,7 +506,7 @@ class VideoAudioFeatureProcessor:
         # self.video_feature_ext = VideoAudioFeatureExtractor()
         # self.video_feature_ext = mvit_extractor
         # self.component_extractor = VideoComponentExtractor()
-        self.feature_extractor = VideoAudioFeatureExtractor()
+        self.feature_extractor = VideoAudioFeatureExtractor(device=self.device)  # pass rank device
         self.batch_size = batch_size
 
     def create_datasubset(self, csv_path, use_preprocessed=True, video_paths=None, audio_paths = None, video_save_dir=None, output_txt_file=None):

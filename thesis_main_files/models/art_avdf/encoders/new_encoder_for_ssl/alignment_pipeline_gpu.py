@@ -109,6 +109,54 @@ class GPUOptimizedTokenProcessor(nn.Module):
         x = x.transpose(1, 2).contiguous()    # [B,8,768]
         return x
 
+class SelfSupervisedAVLoss(nn.Module):
+    """
+    Audio-Video contrastive loss with dynamic temperature.
+    - Expects f_audio and f_video as [B, D] (already pooled/aggregated).
+    - No g_transform. Forward returns only the scalar loss.
+    """
+    def __init__(self, initial_temperature: float = 0.1):
+        super().__init__()
+        self.initial_temperature = initial_temperature
+
+    @torch.no_grad()
+    def adjust_temperature(self, f_audio: torch.Tensor, f_video: torch.Tensor) -> torch.Tensor:
+        """
+        Dynamically adjusts temperature based on feature variance (per-batch scalar).
+        """
+        # variances over feature dim
+        a_var = torch.var(f_audio, dim=1).mean()
+        v_var = torch.var(f_video, dim=1).mean()
+        avg_var = (a_var + v_var) / 2
+        # inverse proportional scaling (add epsilon to avoid div-by-zero)
+        dynamic_temperature = self.initial_temperature * (1.0 / (avg_var + 1e-6))
+        return dynamic_temperature
+
+    def forward(self, f_audio: torch.Tensor, f_video: torch.Tensor) -> torch.Tensor:
+        """
+        f_audio: [B, D]
+        f_video: [B, D]
+        returns: scalar loss tensor
+        """
+        # Normalize for cosine similarity
+        f_audio_norm = F.normalize(f_audio, p=2, dim=1)   # [B, D]
+        f_video_norm = F.normalize(f_video, p=2, dim=1)   # [B, D]
+
+        # Dynamic temperature (uses original or normalized—matching your pasted logic)
+        temperature = self.adjust_temperature(f_audio, f_video_norm)
+
+        # Similarity matrix: [B, B]
+        sim = torch.matmul(f_video_norm, f_audio_norm.T)
+
+        B = f_audio.shape[0]
+        mask = torch.eye(B, device=f_audio.device, dtype=torch.bool)
+        pos = torch.diagonal(sim)                         # [B]
+        neg = sim[~mask].view(B, -1)                      # [B, B-1]
+
+        logits = torch.cat([pos.unsqueeze(1), neg], dim=1) / temperature
+        labels = torch.zeros(B, dtype=torch.long, device=f_audio.device)
+        loss = F.cross_entropy(logits, labels)
+        return loss
 
 # ============================================
 # MAIN GPU-OPTIMIZED ALIGNMENT MODEL
@@ -171,6 +219,14 @@ class GPUOptimizedAlignment(nn.Module):
             video_features: [B, 8, 768]   from MViTv2 (temporal tokens already)
         """
         B = audio_features.shape[0]
+        B, Ta, Da = audio_features.shape
+        Bv, Tv, Dv = video_features.shape
+        if B != Bv or Da != Dv or Da != 768:
+            raise ValueError(f"Aligner input mismatch: audio={audio_features.shape}, video={video_features.shape}")
+        # if Tv not in (8, 392):
+        #     raise ValueError(f"Video tokens must be 8 or 392, got {Tv}")
+        # if Ta not in (101, 100, self.K):
+        #     print(f"[aligner] Warning: audio tokens {Ta} (expected 101/100/{self.K})")
 
         # Create CUDA streams for parallel processing
         audio_stream = torch.cuda.Stream()

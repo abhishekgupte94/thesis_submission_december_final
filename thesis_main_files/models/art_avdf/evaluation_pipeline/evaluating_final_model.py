@@ -76,7 +76,9 @@ class EvaluationPipeline:
         print(f"🔄 Loading checkpoint for eval: {path}")
         state = torch.load(path, map_location=self.device)
         state_dict = state.get("model_state_dict", state)
-        self.model.load_state_dict(state_dict, strict=True)
+        # self.model.load_state_dict(state_dict, strict=True)
+        self.model.load_state_dict(state_dict, strict=False)
+
         print("✅ Checkpoint loaded.")
 
     @torch.no_grad()
