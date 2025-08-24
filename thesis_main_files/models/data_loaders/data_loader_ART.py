@@ -481,6 +481,8 @@ class VideoAudioFeatureExtractor:
             )
             feats = [it["features"] for it in items]  # CPU tensors
             shapes = {tuple(f.shape) for f in feats}
+            print(f"🔊 [DEBUG] Length of shapes: {len(shapes)}, Shapes: {shapes}")  # ← ADD THIS LINE
+
             if len(shapes) == 1:
                 batch = torch.stack(feats, dim=0)
             else:
