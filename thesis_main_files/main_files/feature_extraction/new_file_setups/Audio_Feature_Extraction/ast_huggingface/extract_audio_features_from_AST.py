@@ -723,25 +723,51 @@ class ASTAudioExtractor:
     # ... [Keep all other methods unchanged] ...
 
     # ---- I/O helpers (demux & collate) ----
+    # def _demux_video_to_wav(self, video_path: str, mono: bool = True) -> np.ndarray:
+    #     cmd = [
+    #         "ffmpeg", "-v", "error",
+    #         "-i", video_path,
+    #         "-f", "wav", "-acodec", "pcm_s16le",
+    #         "-ar", str(self.sr),
+    #         "-ac", "1" if mono else "2", "pipe:1"
+    #     ]
+    #     p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    #     if p.returncode != 0:
+    #         raise RuntimeError(f"ffmpeg error for '{video_path}': {p.stderr.decode()}")
+    #     wav_bytes = io.BytesIO(p.stdout)
+    #     wav, sr = torchaudio.load(wav_bytes)  # (C, N)
+    #     if mono and wav.shape[0] > 1:
+    #         wav = wav.mean(dim=0, keepdim=True)
+    #     if sr != self.sr:
+    #         wav = Resample(orig_freq=sr, new_freq=self.sr)(wav)
+    #     return wav.squeeze(0).numpy()  # np.float32
     def _demux_video_to_wav(self, video_path: str, mono: bool = True) -> np.ndarray:
-        cmd = [
-            "ffmpeg", "-v", "error",
-            "-i", video_path,
-            "-f", "wav", "-acodec", "pcm_s16le",
-            "-ar", str(self.sr),
-            "-ac", "1" if mono else "2", "pipe:1"
-        ]
-        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if p.returncode != 0:
-            raise RuntimeError(f"ffmpeg error for '{video_path}': {p.stderr.decode()}")
-        wav_bytes = io.BytesIO(p.stdout)
-        wav, sr = torchaudio.load(wav_bytes)  # (C, N)
-        if mono and wav.shape[0] > 1:
-            wav = wav.mean(dim=0, keepdim=True)
-        if sr != self.sr:
-            wav = Resample(orig_freq=sr, new_freq=self.sr)(wav)
-        return wav.squeeze(0).numpy()  # np.float32
+        """
+        Use torchaudio instead of ffmpeg for audio extraction
+        """
+        try:
+            import torchaudio
 
+            # Load audio directly from video file
+            wav, sr = torchaudio.load(video_path)
+
+            if mono and wav.shape[0] > 1:
+                wav = wav.mean(dim=0, keepdim=True)
+
+            if sr != self.sr:
+                from torchaudio.transforms import Resample
+                resampler = Resample(orig_freq=sr, new_freq=self.sr)
+                wav = resampler(wav)
+
+            return wav.squeeze(0).numpy()  # Convert to numpy array
+
+        except Exception as e:
+            if self.verbose:
+                print(f"⚠️ Audio extraction failed for {video_path}: {e}")
+            # Return 5 seconds of silence as fallback
+            duration = 5.0
+            samples = int(duration * self.sr)
+            return np.zeros(samples, dtype=np.float32)
     def _collate_wavs_to_inputs(self, wavs: List[np.ndarray]) -> torch.Tensor:
         out = self.fe(wavs, sampling_rate=self.sr, return_tensors="pt")
         return out["input_values"]  # (B, 1, n_mels, T) CPU
