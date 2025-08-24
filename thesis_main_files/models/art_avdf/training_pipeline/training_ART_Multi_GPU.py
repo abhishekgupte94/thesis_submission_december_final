@@ -249,6 +249,15 @@ log_dir = f"runs/ssl_ddp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
 class TrainingPipeline:
     def __init__(self, dataset, batch_size, learning_rate, num_epochs, device, feature_processor, output_txt_path, local_rank):
+        if dist.is_initialized():
+            ra = dist.get_rank()
+            try:
+                mvit_dev = feature_processor.feature_extractor.mvit_adapter.device
+                ast_dev = feature_processor.feature_extractor.audio_extractor.device
+            except Exception:
+                mvit_dev = ast_dev = "unknown"
+            print(f"[rank {ra}] trainer={self.device} | mvit={mvit_dev} | ast={ast_dev}")
+
         self.local_rank = local_rank
         self.device = torch.device(f'cuda:{local_rank}')
         torch.cuda.set_device(self.device)
@@ -263,7 +272,7 @@ class TrainingPipeline:
             K=50,
             common_dim=512
         ).to(self.device)
-        self.model = nn.parallel.DistributedDataParallel(self.model, device_ids=[local_rank])
+        self.model = nn.parallel.DistributedDataParallel(self.model, device_ids=[local_rank],output_device=local_rank, find_unused_parameters=False)
 
         self.dataset = dataset
         self.sampler = DistributedSampler(self.dataset)
@@ -310,8 +319,8 @@ class TrainingPipeline:
             running_loss = 0.0
 
             for batch in self.dataloader:
-                video_paths = batch["video_path"]  # List[str]
-                labels = batch["label"]  # List[int] or tensor
+                video_paths = batch["video_path"]
+                labels = batch["label"]
                 processed_audio_features, processed_video_features = self.extract_features(video_paths)
                 # after extraction, force both onto the modelâ€™s device
 

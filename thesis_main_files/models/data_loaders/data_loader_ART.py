@@ -1224,7 +1224,7 @@ class VideoAudioFeatureExtractor:
             aggregate="mean"
         )
         self.audio_extractor = ASTAudioExtractor(
-            device=device,
+            device=dev,
             amp=amp,
             time_series=True,     # 'yes' by default
             token_pool="none",    # keep time series, no pooling

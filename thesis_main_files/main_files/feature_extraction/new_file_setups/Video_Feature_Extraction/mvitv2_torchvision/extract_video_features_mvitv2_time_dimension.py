@@ -178,7 +178,9 @@ except Exception:
 def _decord_ctx(self):
     if _HAS_DECORD and getattr(self, "use_gpu_decode", True):
         try:
-            return gpu(int(getattr(self, "gpu_decode_id", 0)))  # e.g., local_rank
+            gpu_id = (self.device.index if isinstance(self.device, torch.device) and self.device.type == "cuda" else 0)
+            # return gpu(int(getattr(self, "gpu_decode_id", 0)))  # e.g., local_rank
+            return gpu_id
         except Exception:
             pass
     return cpu(0)
@@ -202,6 +204,7 @@ def _compute_indices_like_cv2(self, original_fps: float, total_frames: int, samp
 def _sample_frames_decord_like_cv2(self, video_path: str, sampling_interval_ms: float, fallback_fps: float = 25.0):
     if not _HAS_DECORD:
         raise ImportError("Install decord (optionally decord-cuXYZ for GPU).")
+
     ctx = self._decord_ctx()
     vr = VideoReader(str(video_path), ctx=ctx)
 
