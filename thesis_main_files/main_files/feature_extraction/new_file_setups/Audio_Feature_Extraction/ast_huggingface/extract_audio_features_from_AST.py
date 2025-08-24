@@ -718,7 +718,7 @@ class ASTAudioExtractor:
         )
         self.model = ASTModel.from_pretrained(model_name)
         self.model.eval().to(self.device)
-        torch.set_grad_enabled(False)
+        # torch.set_grad_enabled(False)
 
     # ... [Keep all other methods unchanged] ...
 

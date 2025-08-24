@@ -68,4 +68,4 @@ class MViTVideoFeatureExtractor:
             batch = torch.stack(pooled, dim=0)  # (B, D)
 
         # Move to trainer’s device
-        return batch.to(self.device, non_blocking=True)
+        return batch

@@ -449,7 +449,7 @@ def main():
 
         # Feature processor
         feature_processor = VideoAudioFeatureProcessor(batch_size=batch_size)
-
+        torch.set_grad_enabled(True)
         # Initialize trainer
         trainer = TrainingPipeline(
             dataset=dataset,

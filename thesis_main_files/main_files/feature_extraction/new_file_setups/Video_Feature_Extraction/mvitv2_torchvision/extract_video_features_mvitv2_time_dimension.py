@@ -194,7 +194,7 @@ class MViTv2FeatureExtractor:
         self.verbose = verbose
         self.dtype = dtype
         self.default_save_dir = Path(default_save_dir) if default_save_dir else None
-        torch.set_grad_enabled(False)
+        # torch.set_grad_enabled(False)
 
         # Pretrained model + transforms
         self.weights = MViT_V2_S_Weights.KINETICS400_V1
@@ -361,7 +361,7 @@ class MViTv2FeatureExtractor:
                     feats = tfeats.mean(dim=1)  # pool tokens
                 else:
                     feats = self.model(x)  # logits as fallback
-                return feats.detach().cpu()
+                return feats.detach()
 
             # preserve_temporal == True
             if "norm_output" in self.features_cache:
@@ -405,10 +405,10 @@ class MViTv2FeatureExtractor:
                         f"Temporal pool shape mismatch: L={L}, expected 1+T'H'W'={1 + T_prime * H_prime * W_prime}. "
                         f"Falling back to simple token mean per time inference.")
                     feats = seq.mean(dim=1, keepdim=False).unsqueeze(1)  # (B, 1, D)
-                return feats.detach().cpu()
+                return feats.detach()
 
             # If not temporal_pool, return the raw sequence
-            return seq.detach().cpu()
+            return seq.detach()
 
     def _process_clips_through_model(self,
                                      clips: List[torch.Tensor],

@@ -272,9 +272,11 @@ class TrainingPipeline:
             dataset,
             batch_size=batch_size,
             sampler=self.sampler,
-            num_workers=8,
+            num_workers=min(8, (os.cpu_count() or 8)),
             pin_memory=True,
-            persistent_workers=True
+            prefetch_factor=4,  # ← keep workers ahead
+            persistent_workers=False,  # ← avoid first-batch stalls during bring-up
+            drop_last=True,  # ← cleaner DDP sync
         )
 
         self.optimizer = optim.SGD(self.model.parameters(), lr=learning_rate)
