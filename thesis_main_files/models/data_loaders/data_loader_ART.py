@@ -1264,7 +1264,7 @@ class VideoAudioFeatureProcessor:
     """
     Combines component and feature extractors to produce a usable dataset.
     """
-    def __init__(self,batch_size):
+    def __init__(self,batch_size,local_rank):
         # self.video_preprocess_dir = video_preprocess_dir
         # self.feature_dir_vid = feature_dir_vid
 

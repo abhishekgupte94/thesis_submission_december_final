@@ -448,7 +448,7 @@ def main():
         dataset = VideoAudioDataset(csv_path=csv_path, video_dir=video_dir)
 
         # Feature processor
-        feature_processor = VideoAudioFeatureProcessor(batch_size=batch_size)
+        feature_processor = VideoAudioFeatureProcessor(batch_size=batch_size,local_rank = local_rank)
         torch.set_grad_enabled(True)
         # Initialize trainer
         trainer = TrainingPipeline(
