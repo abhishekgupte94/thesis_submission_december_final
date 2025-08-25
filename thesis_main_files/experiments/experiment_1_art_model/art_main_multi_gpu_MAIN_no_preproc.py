@@ -296,6 +296,11 @@ if project_root not in sys.path:
 from codecarbon import EmissionsTracker
 
 import torch
+import torch
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+torch.backends.cudnn.benchmark = True
+
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 
