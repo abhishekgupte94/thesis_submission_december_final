@@ -917,9 +917,10 @@ def create_file_paths_for_train(csv_path, video_dir):
         csv_path (str or Path): Path to the CSV file containing filenames and labels.
         video_dir (str or Path): Directory where the corresponding video files are stored
                                  (from convert_paths_for_training).
+        limit (int, optional): Maximum number of samples to return. Defaults to 5000.
 
     Returns:
-        tuple: (original_paths, labels)
+        tuple: (original_paths, labels) limited to 'limit' entries.
     """
     csv_path = Path(csv_path)
     video_dir = Path(video_dir)
@@ -928,13 +929,13 @@ def create_file_paths_for_train(csv_path, video_dir):
 
     original_paths = []
     for filename in df['file']:
-        # Build full path inside the video_dir
         full_original_path = video_dir / filename
         original_paths.append(str(full_original_path))
 
     labels = df['label'].tolist()
 
-    return original_paths, labels
+    # Restrict to the first 'limit' entries
+    return original_paths[:5000], labels[:5000]
 
 import pandas as pd
 from pathlib import Path
