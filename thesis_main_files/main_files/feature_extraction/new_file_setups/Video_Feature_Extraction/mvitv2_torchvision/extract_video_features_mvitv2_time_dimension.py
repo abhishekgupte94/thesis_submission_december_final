@@ -175,13 +175,19 @@ try:
 except Exception:
     _HAS_DECORD = False
 
-# from decord import cpu, gpu
+from decord import cpu, gpu
 
 def _decord_ctx(self):
     if _HAS_DECORD and getattr(self, "use_gpu_decode", True):
-        gpu_id = (self.device.index if isinstance(self.device, torch.device) and self.device.type == "cuda" else 0)
-        return gpu(int(gpu_id))  # ✅ return a decord Device
+        try:
+            # Use the *visible* device ordinal for this process
+            did = (self.device.index if isinstance(self.device, torch.device) and self.device.type == "cuda"
+                   else torch.cuda.current_device() if torch.cuda.is_available() else 0)
+            return gpu(int(did))              # ✅ return decord Device
+        except Exception:
+            pass
     return cpu(0)
+
 
 
 def _compute_indices_like_cv2(self, original_fps: float, total_frames: int, sampling_interval_ms: float):
@@ -623,10 +629,33 @@ class MViTv2FeatureExtractor:
         # 1) Decode & preprocess
         # ---------------------------
         p = Path(video_path)
-        frames_rgb = self._sample_frames_decord_like_cv2(
-            video_path=str(video_path),
-            sampling_interval_ms=40.0  # or your variable sampling_interval_ms
-        )
+        try:
+            frames_rgb = self._sample_frames_decord_like_cv2(video_path=str(video_path), sampling_interval_ms=40.0)
+        except Exception as e:
+            if self.verbose:
+                print(f"[WARN] Decord failed on {video_path}: {e}. Falling back to OpenCV.")
+            print("Decord did not work; falling back to openCV")
+            cap = cv2.VideoCapture(str(p))
+            if not cap.isOpened():
+                raise RuntimeError(f"Failed to open video: {p}")
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            fps = float(cap.get(cv2.CAP_PROP_FPS)) if cap.get(cv2.CAP_PROP_FPS) else 0.0
+
+            # sample frames at ~25 fps (40 ms) just like elsewhere
+            frames_rgb = self._sample_frames_cv2(
+                cap=cap,
+                original_fps=fps if fps > 0 else 25.0,
+                sampling_interval_ms=40.0,
+                total_frames=total_frames,
+            )
+            cap.release()
+            if not frames_rgb:
+                return None
+
+        # frames_rgb = self._sample_frames_decord_like_cv2(
+        #     video_path=str(video_path),
+        #     sampling_interval_ms=40.0  # or your variable sampling_interval_ms
+        # )
 
         # # Decode frames with cv2 using your helper
         # cap = cv2.VideoCapture(str(p))
