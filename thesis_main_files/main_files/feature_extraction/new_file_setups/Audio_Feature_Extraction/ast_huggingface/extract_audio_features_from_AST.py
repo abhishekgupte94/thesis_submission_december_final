@@ -839,6 +839,7 @@ class ASTAudioExtractor:
                            save_dir: Optional[str] = None,
                            overwrite: bool = False) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
+        print("Audio Extraction stage reached!")
         for vp in paths:
             try:
                 r = self.extract_one(vp, save=save, save_dir=save_dir, overwrite=overwrite)
