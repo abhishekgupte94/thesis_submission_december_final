@@ -166,69 +166,89 @@ def infer_thw_from_model_and_input(model: nn.Module, T_in: int, H_in: int, W_in:
     return int(T), int(H), int(W)
 
 
-####Possible Decord workaround
+####Possible ffmpegcv workaround
+# --- ffmpegcv helpers (add once) ---
+from typing import List, Optional
 import numpy as np
 
 try:
-    from decord import VideoReader, cpu, gpu
-    _HAS_DECORD = True
+    from ffmpegcv import VideoReaderNV as _VR  # GPU NVDEC
 except Exception:
-    _HAS_DECORD = False
+    try:
+        from ffmpegcv import VideoReader as _VR  # CPU reader
+    except Exception:
+        _VR = None
 
-from decord import cpu, gpu
-
-def _decord_ctx(self):
-    if _HAS_DECORD and getattr(self, "use_gpu_decode", True):
-        try:
-            # Use the *visible* device ordinal for this process
-            did = (self.device.index if isinstance(self.device, torch.device) and self.device.type == "cuda"
-                   else torch.cuda.current_device() if torch.cuda.is_available() else 0)
-            return gpu(int(did))              # ✅ return decord Device
-        except Exception:
-            pass
-    return cpu(0)
-
-
-
-def _compute_indices_like_cv2(self, original_fps: float, total_frames: int, sampling_interval_ms: float):
-    target_fps = 1000.0 / sampling_interval_ms
+def _build_indices_like_cv2(total_frames: Optional[int],
+                            original_fps: float,
+                            sampling_interval_ms: float) -> Optional[List[int]]:
+    """
+    Mirror your cv2 index logic exactly (including duplicates when upsampling).
+    """
+    if not total_frames or total_frames <= 0:
+        return None
+    target_fps = 1000.0 / sampling_interval_ms  # 40ms -> 25 fps
     if abs(original_fps - target_fps) < 0.1:
-        return list(range(total_frames))  # ALL frames
+        return list(range(total_frames))
     duration_ms = (total_frames / max(original_fps, 1e-6)) * 1000.0
     num_target = int(duration_ms / sampling_interval_ms)
-    idxs = []
+    idxs: List[int] = []
     for i in range(num_target):
         t_ms = i * sampling_interval_ms
         idx = int((t_ms / 1000.0) * original_fps)
         if idx < total_frames:
-            idxs.append(idx)
-    if not idxs:  # safety
-        idxs = [0]
+            idxs.append(idx)  # keep duplicates exactly like cv2
     return idxs
 
-def _sample_frames_decord_like_cv2(self, video_path: str, sampling_interval_ms: float, fallback_fps: float = 25.0):
-    if not _HAS_DECORD:
-        raise ImportError("Install decord (optionally decord-cuXYZ for GPU).")
+def sample_frames_ffmpegcv_like_cv2(path,
+                                    sampling_interval_ms: float = 40.0,
+                                    fallback_fps: float = 25.0,
+                                    resize: Optional[tuple[int,int]] = None,
+                                    pix_fmt: str = "rgb24") -> List[np.ndarray]:
+    """
+    Decode + sample using ffmpegcv, matching cv2 semantics (RGB HWC uint8 frames).
+    """
+    if _VR is None:
+        raise RuntimeError("ffmpegcv not available (install `ffmpegcv`).")
 
-    ctx = self._decord_ctx()
-    vr = VideoReader(str(video_path), ctx=ctx)
+    frames: List[np.ndarray] = []
+    with _VR(str(path), pix_fmt=pix_fmt, resize=resize) as vr:
+        src_fps = float(vr.fps) if getattr(vr, "fps", None) else 0.0
+        fps = src_fps if src_fps > 0 else fallback_fps
+        total_frames = int(vr.count) if getattr(vr, "count", None) else None
 
-    total_frames = len(vr)
-    # Decord avg fps can be a fraction; fall back if missing/zero
-    try:
-        original_fps = float(vr.get_avg_fps()) or float(fallback_fps)
-    except Exception:
-        original_fps = float(fallback_fps)
+        indices = _build_indices_like_cv2(total_frames, fps, sampling_interval_ms)
 
-    frame_indices = self._compute_indices_like_cv2(original_fps, total_frames, sampling_interval_ms)
+        if indices is None:
+            # Count unknown -> approximate stride sampling to target fps
+            target_fps = 1000.0 / sampling_interval_ms
+            stride = max(1, round(fps / target_fps))
+            for i, frame in enumerate(vr):
+                if i % stride == 0:
+                    frames.append(frame)  # (H, W, 3), RGB uint8
+            return frames
 
-    # Clamp to valid range and fetch in one call; Decord returns RGB uint8 (T,H,W,3)
-    max_idx = max(0, total_frames - 1)
-    safe_idx = [min(int(i), max_idx) for i in frame_indices]
-    batch = vr.get_batch(safe_idx).asnumpy()   # (T,H,W,3) RGB uint8
-    # Return the same type your pipeline expects: list of (H,W,3) uint8 frames
-    return [batch[t] for t in range(batch.shape[0])]
-#######
+        # Exact cv2-like behavior without random seeks (keep duplicates)
+        it = iter(indices)
+        try:
+            next_idx = next(it)
+        except StopIteration:
+            next_idx = None
+
+        for i, frame in enumerate(vr):
+            while next_idx is not None and i == next_idx:
+                frames.append(frame)  # may append same frame multiple times
+                try:
+                    next_idx = next(it)
+                except StopIteration:
+                    next_idx = None
+                    break
+            if next_idx is None:
+                break
+
+    return frames
+
+######
 
 
 # ----------------- Extractor -----------------
@@ -629,35 +649,7 @@ class MViTv2FeatureExtractor:
         # 1) Decode & preprocess
         # ---------------------------
         p = Path(video_path)
-        try:
-            frames_rgb = self._sample_frames_decord_like_cv2(video_path=str(video_path), sampling_interval_ms=40.0)
-        except Exception as e:
-            if self.verbose:
-                print(f"[WARN] Decord failed on {video_path}: {e}. Falling back to OpenCV.")
-            print("Decord did not work; falling back to openCV")
-            cap = cv2.VideoCapture(str(p))
-            if not cap.isOpened():
-                raise RuntimeError(f"Failed to open video: {p}")
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            fps = float(cap.get(cv2.CAP_PROP_FPS)) if cap.get(cv2.CAP_PROP_FPS) else 0.0
 
-            # sample frames at ~25 fps (40 ms) just like elsewhere
-            frames_rgb = self._sample_frames_cv2(
-                cap=cap,
-                original_fps=fps if fps > 0 else 25.0,
-                sampling_interval_ms=40.0,
-                total_frames=total_frames,
-            )
-            cap.release()
-            if not frames_rgb:
-                return None
-
-        # frames_rgb = self._sample_frames_decord_like_cv2(
-        #     video_path=str(video_path),
-        #     sampling_interval_ms=40.0  # or your variable sampling_interval_ms
-        # )
-
-        # # Decode frames with cv2 using your helper
         # cap = cv2.VideoCapture(str(p))
         # if not cap.isOpened():
         #     raise RuntimeError(f"Failed to open video: {p}")
@@ -673,10 +665,41 @@ class MViTv2FeatureExtractor:
         # )
         # cap.release()
 
-        # to (T, C, H, W) uint8
-        # vt_tchw = self._frames_to_tensor(frames)
-        ### Decord workaround
-        vt_tchw = self._frames_to_tensor(frames_rgb)
+        # --- ffmpegcv first, cv2 fallback ---
+        try:
+            frames = sample_frames_ffmpegcv_like_cv2(
+                path=p,  # or video_path
+                sampling_interval_ms=40.0,  # ~25 fps
+                fallback_fps=25.0,
+                resize=None,  # or (W, H) to decode-resize
+                pix_fmt="rgb24",
+            )
+            if len(frames) == 0:
+                logger.warning(f"No frames extracted from {p} via ffmpegcv")
+                return np.zeros(self.feature_dim)
+
+        except Exception as e:
+            # logger.warning(f"ffmpegcv failed for {p} ({e}); falling back to cv2")
+            print("Failed to use ffmpegcv, falling back to cv2")
+            cap = cv2.VideoCapture(str(p))
+            if not cap.isOpened():
+                raise RuntimeError(f"Failed to open video: {p}")
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            fps = float(cap.get(cv2.CAP_PROP_FPS)) if cap.get(cv2.CAP_PROP_FPS) else 0.0
+
+            frames = self._sample_frames_cv2(
+                cap=cap,
+                original_fps=fps if fps > 0 else 25.0,
+                sampling_interval_ms=40.0,
+                total_frames=total_frames,
+            )
+            cap.release()
+
+            if len(frames) == 0:
+                logger.warning(f"No frames extracted from {p} via cv2")
+                return np.zeros(self.feature_dim)
+
+        vt_tchw = self._frames_to_tensor(frames)
         # ensure we have at least clip_len frames and pick a center clip
         clip_len = 16
         vt_tchw = self._pad_short_video(vt_tchw, clip_len=clip_len)

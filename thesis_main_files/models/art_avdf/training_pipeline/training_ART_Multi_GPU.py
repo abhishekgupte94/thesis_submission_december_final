@@ -342,7 +342,7 @@ class TrainingPipeline:
                 # Global pooled features for loss
                 audio_global = output['audio_aligned'].mean(dim=1)  # [B, 512]
                 video_global = output['video_aligned'].mean(dim=1)  # [B, 512]
-
+                print("pooled staged reached!")
                 # ðŸ”„ CHANGE: use SelfSupervisedAVLoss
                 loss = self.loss_fn(audio_global, video_global)
 
@@ -359,7 +359,7 @@ class TrainingPipeline:
                     self.writer.add_scalar("Loss/train", loss.item(), global_step)
 
                 global_step += 1
-
+                print(f"{global_step} reached!")
                 # ðŸ”’ Commented out evaluator for now
                 # if (epoch + 1) % 50 == 0 and dist.get_rank() == 0:
                 #     save_path_tsne = os.path.join(checkpoint_dir, f"t_sne_{epoch + 1}.png")

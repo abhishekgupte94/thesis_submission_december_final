@@ -422,6 +422,7 @@ def main():
             project_name="ssl_project_eval",
             output_dir="carbon_logs_eval",
             save_to_file=True,
+            log_level="error"
         )
         tracker.start()
         try:
