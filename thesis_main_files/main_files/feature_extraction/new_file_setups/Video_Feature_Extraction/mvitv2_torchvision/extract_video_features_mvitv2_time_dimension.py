@@ -175,15 +175,14 @@ try:
 except Exception:
     _HAS_DECORD = False
 
+# from decord import cpu, gpu
+
 def _decord_ctx(self):
     if _HAS_DECORD and getattr(self, "use_gpu_decode", True):
-        try:
-            gpu_id = (self.device.index if isinstance(self.device, torch.device) and self.device.type == "cuda" else 0)
-            # return gpu(int(getattr(self, "gpu_decode_id", 0)))  # e.g., local_rank
-            return gpu_id
-        except Exception:
-            pass
+        gpu_id = (self.device.index if isinstance(self.device, torch.device) and self.device.type == "cuda" else 0)
+        return gpu(int(gpu_id))  # ✅ return a decord Device
     return cpu(0)
+
 
 def _compute_indices_like_cv2(self, original_fps: float, total_frames: int, sampling_interval_ms: float):
     target_fps = 1000.0 / sampling_interval_ms
