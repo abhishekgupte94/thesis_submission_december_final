@@ -367,7 +367,7 @@ class TrainingPipeline:
                 #     self.start_evaluation(self.model.module, None, None, similarity_matrix, save_path_tsne, save_path_retrieval)
 
             avg_loss = running_loss / len(self.dataloader)
-            print(f"Epoch [{epoch + 1}/{self.num_epochs}], Loss: {avg_loss:.4f}")
+            print(f"Epoch [{epoch + 1}/{self.num_epochs}] completed, Loss: {avg_loss:.4f}")
             if self.writer is not None:
                 self.writer.add_scalar("train/loss_epoch", avg_loss, epoch + 1)
 
