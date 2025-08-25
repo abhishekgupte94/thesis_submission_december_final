@@ -234,7 +234,7 @@ class MViTv2FeatureExtractor:
             device: str = "cuda",
             preserve_temporal: bool = True,
             temporal_pool: bool = True,
-            aggregate: str = "none",
+            aggregate: str = "mean",
             dtype: torch.dtype = torch.float32,
             verbose: bool = False,
             default_save_dir: Optional[str] = None,
