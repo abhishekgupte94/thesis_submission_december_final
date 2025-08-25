@@ -324,7 +324,7 @@ class TrainingPipeline:
                 labels = batch["label"]
                 processed_audio_features, processed_video_features = self.extract_features(video_paths)
                 # after extraction, force both onto the modelâ€™s device
-
+                print("features extracted!")
                 if processed_audio_features is None or processed_video_features is None:
                     print("Skipping batch due to feature extraction failure.")
                     continue
