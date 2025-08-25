@@ -461,7 +461,7 @@ def main():
             dataset=dataset,
             batch_size=batch_size,
             learning_rate=1e-4,
-            num_epochs=25,
+            num_epochs=10,
             device=torch.device(f"cuda:{local_rank}"),
             feature_processor=feature_processor,
             output_txt_path=None,

@@ -935,7 +935,7 @@ def create_file_paths_for_train(csv_path, video_dir):
     labels = df['label'].tolist()
 
     # Restrict to the first 'limit' entries
-    return original_paths[:5000], labels[:5000]
+    return original_paths[:3000], labels[:3000]
 
 import pandas as pd
 from pathlib import Path
