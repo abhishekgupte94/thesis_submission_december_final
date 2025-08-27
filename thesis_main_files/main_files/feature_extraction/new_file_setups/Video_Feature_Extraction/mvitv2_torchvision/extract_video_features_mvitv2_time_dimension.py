@@ -173,11 +173,15 @@ import numpy as np
 
 try:
     from ffmpegcv import VideoReaderNV as _VR  # GPU NVDEC
+    _VR_BACKEND = "GPU (NVDEC)"
 except Exception:
     try:
-        from ffmpegcv import VideoReader as _VR  # CPU reader
+        from ffmpegcv import VideoReader as _VR  # CPU fallback
+        _VR_BACKEND = "CPU (ffmpeg)"
     except Exception:
         _VR = None
+        _VR_BACKEND = None
+
 
 def _build_indices_like_cv2(total_frames: Optional[int],
                             original_fps: float,
@@ -330,6 +334,8 @@ class MViTv2FeatureExtractor:
                            original_fps: float,
                            sampling_interval_ms: float,
                            total_frames: int) -> List[np.ndarray]:
+        print(f"[ffmpegcv] Using backend: {_VR_BACKEND}")  # 👈 Added log
+
         frames: List[np.ndarray] = []
         target_fps = 1000.0 / sampling_interval_ms  # e.g., 40ms -> 25 fps
 
