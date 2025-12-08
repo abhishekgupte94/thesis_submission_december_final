@@ -42,7 +42,6 @@ logs/
 # ----------------------
 # Data & model artifacts (adjust as needed)
 # ----------------------
-thesis_main_files/data/*
 thesis_main_files/notebooks/*
 thesis_main_files/notebooks_for_preprocessing/*
 thesis_main_files/pretrained_weights/*
@@ -67,9 +66,144 @@ config_local.*
 #----------------------
 # Keep the folders of the files ignored
 #----------------------
-!thesis_main_files/data/.gitkeep
 !thesis_main_files/notebooks/.gitkeep
 !thesis_main_files/notebooks_for_preprocessing/.gitkeep
 !thesis_main_files/pretrained_weights/.gitkeep
 !thesis_main_files/images/.gitkeep
 !thesis_main_files/models/.gitkeep
+
+
+#---------------------------
+# data files
+########################
+# =====================================================================
+# Auto-generated .gitignore rules for thesis_main_files/data
+# Paste this block into your .gitignore at the repo root.
+# It will:
+#   - ignore all files under thesis_main_files/data
+#   - but allow .gitkeep in each directory so the folder structure
+#     can be kept in the repo if you add those files.
+# =====================================================================
+
+thesis_main_files/data/**
+!thesis_main_files/data/
+
+# Ignore files in thesis_main_files/data/processed, but allow the directory and its .gitkeep
+thesis_main_files/data/processed/*
+!thesis_main_files/data/processed/.gitkeep
+!thesis_main_files/data/processed/
+
+# Ignore files in thesis_main_files/data/processed/video_files, but allow the directory and its .gitkeep
+thesis_main_files/data/processed/video_files/*
+!thesis_main_files/data/processed/video_files/.gitkeep
+!thesis_main_files/data/processed/video_files/
+
+# Ignore files in thesis_main_files/data/processed/video_files/AVSpeech, but allow the directory and its .gitkeep
+thesis_main_files/data/processed/video_files/AVSpeech/*
+!thesis_main_files/data/processed/video_files/AVSpeech/.gitkeep
+!thesis_main_files/data/processed/video_files/AVSpeech/
+
+# Ignore files in thesis_main_files/data/processed/video_files/AVSpeech/video, but allow the directory and its .gitkeep
+thesis_main_files/data/processed/video_files/AVSpeech/video/*
+!thesis_main_files/data/processed/video_files/AVSpeech/video/.gitkeep
+!thesis_main_files/data/processed/video_files/AVSpeech/video/
+
+# Ignore files in thesis_main_files/data/processed/video_files/AVSpeech/audio, but allow the directory and its .gitkeep
+thesis_main_files/data/processed/video_files/AVSpeech/audio/*
+!thesis_main_files/data/processed/video_files/AVSpeech/audio/.gitkeep
+!thesis_main_files/data/processed/video_files/AVSpeech/audio/
+
+# Ignore files in thesis_main_files/data/processed/AVSpeech, but allow the directory and its .gitkeep
+thesis_main_files/data/processed/AVSpeech/*
+!thesis_main_files/data/processed/AVSpeech/.gitkeep
+!thesis_main_files/data/processed/AVSpeech/
+
+# Ignore files in thesis_main_files/data/processed/AVSpeech/AVSpeech_timestamps.csv, but allow the directory and its .gitkeep
+thesis_main_files/data/processed/AVSpeech/AVSpeech_timestamps.csv/*
+!thesis_main_files/data/processed/AVSpeech/AVSpeech_timestamps.csv/.gitkeep
+!thesis_main_files/data/processed/AVSpeech/AVSpeech_timestamps.csv/
+
+# Ignore files in thesis_main_files/data/processed/splits, but allow the directory and its .gitkeep
+thesis_main_files/data/processed/splits/*
+!thesis_main_files/data/processed/splits/.gitkeep
+!thesis_main_files/data/processed/splits/
+
+# Ignore files in thesis_main_files/data/raw, but allow the directory and its .gitkeep
+thesis_main_files/data/raw/*
+!thesis_main_files/data/raw/.gitkeep
+!thesis_main_files/data/raw/
+
+# Ignore files in thesis_main_files/data/raw/video_files, but allow the directory and its .gitkeep
+thesis_main_files/data/raw/video_files/*
+!thesis_main_files/data/raw/video_files/.gitkeep
+!thesis_main_files/data/raw/video_files/
+
+# Ignore files in thesis_main_files/data/raw/video_files/sanity_check_ten_videos, but allow the directory and its .gitkeep
+thesis_main_files/data/raw/video_files/sanity_check_ten_videos/*
+!thesis_main_files/data/raw/video_files/sanity_check_ten_videos/.gitkeep
+!thesis_main_files/data/raw/video_files/sanity_check_ten_videos/
+
+# Ignore files in thesis_main_files/data/raw/csv, but allow the directory and its .gitkeep
+thesis_main_files/data/raw/csv/*
+!thesis_main_files/data/raw/csv/.gitkeep
+!thesis_main_files/data/raw/csv/
+
+# Ignore files in thesis_main_files/data/raw/csv/dfdc, but allow the directory and its .gitkeep
+thesis_main_files/data/raw/csv/dfdc/*
+!thesis_main_files/data/raw/csv/dfdc/.gitkeep
+!thesis_main_files/data/raw/csv/dfdc/
+
+# Ignore files in thesis_main_files/data/raw/csv/lav_df, but allow the directory and its .gitkeep
+thesis_main_files/data/raw/csv/lav_df/*
+!thesis_main_files/data/raw/csv/lav_df/.gitkeep
+!thesis_main_files/data/raw/csv/lav_df/
+
+# Ignore files in thesis_main_files/data/raw/csv/lav_df/metadata, but allow the directory and its .gitkeep
+thesis_main_files/data/raw/csv/lav_df/metadata/*
+!thesis_main_files/data/raw/csv/lav_df/metadata/.gitkeep
+!thesis_main_files/data/raw/csv/lav_df/metadata/
+
+# Ignore files in thesis_main_files/data/raw/csv/AVSpeech, but allow the directory and its .gitkeep
+thesis_main_files/data/raw/csv/AVSpeech/*
+!thesis_main_files/data/raw/csv/AVSpeech/.gitkeep
+!thesis_main_files/data/raw/csv/AVSpeech/
+
+# Ignore files in thesis_main_files/data/raw/metadata, but allow the directory and its .gitkeep
+thesis_main_files/data/raw/metadata/*
+!thesis_main_files/data/raw/metadata/.gitkeep
+!thesis_main_files/data/raw/metadata/
+
+# Ignore files in thesis_main_files/data/raw/metadata/ASVSpoof, but allow the directory and its .gitkeep
+thesis_main_files/data/raw/metadata/ASVSpoof/*
+!thesis_main_files/data/raw/metadata/ASVSpoof/.gitkeep
+!thesis_main_files/data/raw/metadata/ASVSpoof/
+
+# Ignore files in thesis_main_files/data/raw/metadata/vid-timit, but allow the directory and its .gitkeep
+thesis_main_files/data/raw/metadata/vid-timit/*
+!thesis_main_files/data/raw/metadata/vid-timit/.gitkeep
+!thesis_main_files/data/raw/metadata/vid-timit/
+
+# Ignore files in thesis_main_files/data/raw/metadata/lav-df, but allow the directory and its .gitkeep
+thesis_main_files/data/raw/metadata/lav-df/*
+!thesis_main_files/data/raw/metadata/lav-df/.gitkeep
+!thesis_main_files/data/raw/metadata/lav-df/
+
+# Ignore files in thesis_main_files/data/raw/metadata/timit-tts, but allow the directory and its .gitkeep
+thesis_main_files/data/raw/metadata/timit-tts/*
+!thesis_main_files/data/raw/metadata/timit-tts/.gitkeep
+!thesis_main_files/data/raw/metadata/timit-tts/
+
+# Ignore files in thesis_main_files/data/raw/metadata/deepfake-timit, but allow the directory and its .gitkeep
+thesis_main_files/data/raw/metadata/deepfake-timit/*
+!thesis_main_files/data/raw/metadata/deepfake-timit/.gitkeep
+!thesis_main_files/data/raw/metadata/deepfake-timit/
+
+# Ignore files in thesis_main_files/data/raw/metadata/dfdc, but allow the directory and its .gitkeep
+thesis_main_files/data/raw/metadata/dfdc/*
+!thesis_main_files/data/raw/metadata/dfdc/.gitkeep
+!thesis_main_files/data/raw/metadata/dfdc/
+
+# Ignore files in thesis_main_files/data/raw/metadata/celeb-df, but allow the directory and its .gitkeep
+thesis_main_files/data/raw/metadata/celeb-df/*
+!thesis_main_files/data/raw/metadata/celeb-df/.gitkeep
+!thesis_main_files/data/raw/metadata/celeb-df/
