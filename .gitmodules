@@ -1,0 +1,6 @@
+[submodule "thesis_main_files/external/LAV-DF"]
+	path = thesis_main_files/external/LAV-DF
+	url = https://github.com/ControlNet/LAV-DF.git
+[submodule "thesis_main_files/external/Swin-Transformer"]
+	path = thesis_main_files/external/Swin-Transformer
+	url = https://github.com/microsoft/Swin-Transformer.git

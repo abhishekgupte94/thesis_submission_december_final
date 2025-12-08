@@ -1,34 +1,75 @@
-# Ignore all files in these folders:
-thesis_main_files/datasets/*
-thesis_main_files/jupyter_notebooks/*
-thesis_main_files/images/*
-thesis_main_files/results/*
-
-# But keep the folders themselves
-!thesis_main_files/datasets/.gitkeep
-!thesis_main_files/jupyter_notebooks/.gitkeep
-!thesis_main_files/images/.gitkeep
-!thesis_main_files/results/.gitkeep
-
-# Python
+# ----------------------
+# Python bytecode / cache
+# ----------------------
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
+*$py.class
 
-# Virtual Environments
-.venv/
+# ----------------------
+# Virtual environments
+# ----------------------
 venv/
-ENV/
+.venv/
 env/
-.conda/
+.env/
+#
+## ----------------------
+## Distribution / packaging
+## ----------------------
+#build/
+#dist/
+#*.egg-info/
 
-# PyCharm
+# ----------------------
+# IDE settings
+# ----------------------
 .idea/
+*.iml
+.vscode/
 
-# macOS
+# ----------------------
+# OS junk
+# ----------------------
 .DS_Store
+Thumbs.db
 
-# Datasets / logs
-dataset/
+# ----------------------
+# Logs
+# ----------------------
+logs/
 *.log
+
+# ----------------------
+# Data & model artifacts (adjust as needed)
+# ----------------------
+thesis_main_files/data/*
+thesis_main_files/notebooks/*
+thesis_main_files/notebooks_for_preprocessing/*
+thesis_main_files/pretrained_weights/*
+thesis_main_files/images/*
+thesis_main_files/models/*
+*.pt
+*.ckpt
+*.h5
+
+# ----------------------
+# Secrets & local configs
+# ----------------------
+.env
+*.env
+secrets.*
+*.pem
+*.key
+*.crt
+config_local.*
+
+
+#----------------------
+# Keep the folders of the files ignored
+#----------------------
+!thesis_main_files/data/.gitkeep
+!thesis_main_files/notebooks/.gitkeep
+!thesis_main_files/notebooks_for_preprocessing/.gitkeep
+!thesis_main_files/pretrained_weights/.gitkeep
+!thesis_main_files/images/.gitkeep
+!thesis_main_files/models/.gitkeep
