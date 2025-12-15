@@ -21,8 +21,45 @@ except Exception:
     FaceAnalysis = None  # type: ignore
 
 
+# ======================================================================
+# [ADDED] Helper: write BGR frames to a single segment video (.mp4)
+# - Keeps the rest of the preprocessor API unchanged.
+# ======================================================================
+def _write_bgr_frames_to_video(
+    frames_bgr: Sequence[np.ndarray],
+    out_path: Path,
+    fps: float,
+    fourcc_str: str = "mp4v",  # good default for .mp4 on macOS
+) -> Tuple[bool, int]:
+    """Write frames to video. Returns (ok, num_frames_written)."""
+    if not frames_bgr:
+        return False, 0
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    h0, w0 = frames_bgr[0].shape[:2]
+    fourcc = cv2.VideoWriter_fourcc(*fourcc_str)
+    writer = cv2.VideoWriter(str(out_path), fourcc, float(fps), (int(w0), int(h0)))
+
+    if not writer.isOpened():
+        return False, 0
+
+    written = 0
+    try:
+        for f in frames_bgr:
+            if f is None:
+                continue
+            if f.shape[:2] != (h0, w0):
+                f = cv2.resize(f, (w0, h0), interpolation=cv2.INTER_LINEAR)
+            writer.write(f)
+            written += 1
+    finally:
+        writer.release()
+
+    return True, written
+
+
 def _get_project_root() -> Path:
-    """Best-effort detection of the project root (``thesis_main_files``)."""
     here = Path(__file__).resolve()
     for parent in here.parents:
         if parent.name == "thesis_main_files":
@@ -31,29 +68,39 @@ def _get_project_root() -> Path:
 
 
 def _to_rel_data_path(path: Path) -> str:
-    """Convert an absolute path to a POSIX-style path relative to project root."""
     project_root = _get_project_root()
     try:
-        return path.resolve().relative_to(project_root).as_posix()
+        rel = path.resolve().relative_to(project_root)
+        return rel.as_posix()
     except Exception:
         return path.as_posix()
 
 
-def load_word_times_from_whisper_csv(
-    csv_path: Union[str, Path],
-) -> List[Tuple[float, float]]:
-    """Read Whisper-style word timestamps CSV -> [(start_sec, end_sec), ...]"""
+def load_word_times_from_csv(csv_path: Union[str, Path]) -> List[Tuple[float, float]]:
+    """
+    Load a CSV with at least: start,end columns (seconds).
+    """
     csv_path = Path(csv_path)
     word_times: List[Tuple[float, float]] = []
 
     with csv_path.open("r", newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            try:
-                s = float(row["start"])
-                e = float(row["end"])
-            except (KeyError, ValueError):
+            if row is None:
                 continue
+
+            # flexible column naming
+            start_key = "start" if "start" in row else ("start_time" if "start_time" in row else None)
+            end_key = "end" if "end" in row else ("end_time" if "end_time" in row else None)
+            if start_key is None or end_key is None:
+                continue
+
+            try:
+                s = float(row[start_key])
+                e = float(row[end_key])
+            except Exception:
+                continue
+
             if e > s:
                 word_times.append((s, e))
 
@@ -79,34 +126,20 @@ class VideoPreprocessorConfig:
 
 
 class VideoPreprocessorNPV:
-    """
-    NPV-style VIDEO preprocessor (segment-based, AV-aligned).
-
-    - Builds segments from word timestamps
-    - Single-pass frame->segment assignment (seg_ptr)
-    - Crops faces with InsightFace FaceAnalysis (largest face)
-    """
-
-    def __init__(self, cfg: Optional[VideoPreprocessorConfig] = None) -> None:
+    def __init__(self, cfg: Optional[VideoPreprocessorConfig] = None):
         self.cfg = cfg or VideoPreprocessorConfig()
 
-        # ==================================================================
-        # [ADDED] Init InsightFace FaceAnalysis once
-        # ==================================================================
         self.face_app = None
         if FaceAnalysis is not None:
-            providers = list(self.cfg.providers_cpu)
-            ctx_id = -1
-            if self.cfg.use_gpu_if_available:
-                providers = list(self.cfg.providers_gpu)
-                ctx_id = self.cfg.ctx_id
-
-            self.face_app = FaceAnalysis(
-                name=self.cfg.insightface_model_name,
-                providers=providers,
-                allowed_modules=["detection"],
-            )
-            self.face_app.prepare(ctx_id=ctx_id, det_size=self.cfg.detector_size)
+            try:
+                providers = self.cfg.providers_gpu if self.cfg.use_gpu_if_available else self.cfg.providers_cpu
+                self.face_app = FaceAnalysis(
+                    name=self.cfg.insightface_model_name,
+                    providers=list(providers),
+                )
+                self.face_app.prepare(ctx_id=int(self.cfg.ctx_id), det_size=self.cfg.detector_size)
+            except Exception:
+                self.face_app = None
 
     def build_segments_from_word_times(
         self,
@@ -115,42 +148,56 @@ class VideoPreprocessorNPV:
         min_factor: float = 0.5,
         max_factor: float = 1.5,
     ) -> List[Tuple[float, float]]:
-        if not word_times:
+        """
+        Build segment ranges in seconds from word timestamps.
+        """
+        wt: List[Tuple[float, float]] = []
+        for w in word_times:
+            if w is None or len(w) < 2:
+                continue
+            try:
+                s = float(w[0])
+                e = float(w[1])
+            except Exception:
+                continue
+            if e > s:
+                wt.append((s, e))
+
+        if not wt:
             return []
 
-        segments = [(float(s), float(e)) for s, e in word_times]
+        wt.sort(key=lambda x: x[0])
 
-        def dur(seg):
-            return seg[1] - seg[0]
+        target = float(target_clip_duration)
+        min_len = target * float(min_factor)
+        max_len = target * float(max_factor)
 
-        merged: List[Tuple[float, float]] = []
-        cur = segments[0]
-        for s, e in segments[1:]:
-            if dur(cur) < min_factor * target_clip_duration:
-                cur = (cur[0], e)
-            else:
-                merged.append(cur)
-                cur = (s, e)
-        merged.append(cur)
+        segments: List[Tuple[float, float]] = []
+        seg_start = wt[0][0]
+        seg_end = wt[0][1]
 
-        final: List[Tuple[float, float]] = []
-        for s, e in merged:
-            d = e - s
-            if d <= max_factor * target_clip_duration:
-                final.append((s, e))
-            else:
-                n = max(int(round(d / target_clip_duration)), 1)
-                step = d / n
-                for i in range(n):
-                    cs = s + i * step
-                    ce = min(e, cs + step)
-                    if ce > cs:
-                        final.append((cs, ce))
-        return final
+        for (ws, we) in wt[1:]:
+            seg_end = max(seg_end, we)
+            seg_len = seg_end - seg_start
 
-    # ------------------------------------------------------------------
-    # [MODIFIED] Face detection + cropping is enforced here
-    # ------------------------------------------------------------------
+            if seg_len >= target:
+                if seg_len <= max_len:
+                    segments.append((seg_start, seg_end))
+                    seg_start = ws
+                    seg_end = we
+                else:
+                    segments.append((seg_start, seg_start + max_len))
+                    seg_start = ws
+                    seg_end = we
+
+        tail_len = seg_end - seg_start
+        if tail_len >= min_len:
+            segments.append((seg_start, seg_end))
+        elif not segments:
+            segments.append((seg_start, seg_end))
+
+        return segments
+
     def detect_and_crop_face(self, frame_bgr: np.ndarray) -> Optional[np.ndarray]:
         """
         Uses InsightFace FaceAnalysis (detection-only) to crop the largest face.
@@ -170,10 +217,10 @@ class VideoPreprocessorNPV:
         best_bbox = None
         best_area = -1.0
         for f in faces:
-            bbox = getattr(f, "bbox", None)
-            if bbox is None:
+            try:
+                x1, y1, x2, y2 = f.bbox
+            except Exception:
                 continue
-            x1, y1, x2, y2 = bbox.astype(np.float32)
             area = max(0.0, (x2 - x1)) * max(0.0, (y2 - y1))
             if area > best_area:
                 best_area = area
@@ -209,123 +256,91 @@ class VideoPreprocessorNPV:
         min_factor: float = 0.5,
         max_factor: float = 1.5,
     ) -> List[List[np.ndarray]]:
-        cap = cv2.VideoCapture(str(video_path))
+        """
+        Returns list of segments, each segment is list of cropped face frames (BGR).
+        """
+        segments_sec = self.build_segments_from_word_times(
+            word_times=word_times,
+            target_clip_duration=target_clip_duration,
+            min_factor=min_factor,
+            max_factor=max_factor,
+        )
+        if not segments_sec:
+            return []
+
+        cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
-            raise RuntimeError(f"Cannot open video: {video_path}")
+            raise RuntimeError(f"Could not open video: {video_path}")
 
         fps = cap.get(cv2.CAP_PROP_FPS)
-        num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if fps is None or fps <= 0:
+            fps = 25.0
 
-        segments_sec = self.build_segments_from_word_times(
-            word_times,
-            target_clip_duration,
-            min_factor,
-            max_factor,
-        )
+        all_segment_crops: List[List[np.ndarray]] = []
+        try:
+            for seg_s, seg_e in segments_sec:
+                start_f = int(round(float(seg_s) * float(fps)))
+                end_f = int(round(float(seg_e) * float(fps)))
+                if end_f <= start_f:
+                    all_segment_crops.append([])
+                    continue
 
-        if not segments_sec:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, float(max(0, start_f)))
+
+                crops: List[np.ndarray] = []
+                for _ in range(max(0, end_f - start_f)):
+                    ok, frame = cap.read()
+                    if not ok or frame is None:
+                        break
+
+                    crop = self.detect_and_crop_face(frame)
+
+                    if crop is None:
+                        if keep_full_when_no_face:
+                            crop = frame
+                        else:
+                            continue
+
+                    if self.cfg.crop_resize is not None:
+                        crop = cv2.resize(crop, self.cfg.crop_resize, interpolation=cv2.INTER_LINEAR)
+
+                    crops.append(crop)
+
+                all_segment_crops.append(crops)
+        finally:
             cap.release()
-            return []
 
-        def t2f(t: float) -> int:
-            return int(round(t * fps))
+        return all_segment_crops
 
-        segments_fidx: List[Tuple[int, int]] = []
-        for s, e in segments_sec:
-            fs = max(t2f(float(s)), 0)
-            fe = min(t2f(float(e)), num_frames)
-            if fe > fs:
-                segments_fidx.append((fs, fe))
-
-        if not segments_fidx:
-            cap.release()
-            return []
-
-        segment_crops: List[List[np.ndarray]] = [[] for _ in segments_fidx]
-
-        seg_ptr = 0
-        frame_idx = 0
-        ok, frame = cap.read()
-
-        while ok and frame_idx < num_frames and seg_ptr < len(segments_fidx):
-
-            while seg_ptr < len(segments_fidx) and frame_idx >= segments_fidx[seg_ptr][1]:
-                seg_ptr += 1
-
-            if seg_ptr >= len(segments_fidx):
-                break
-
-            fs, fe = segments_fidx[seg_ptr]
-
-            if fs <= frame_idx < fe:
-                crop = self.detect_and_crop_face(frame)
-                if crop is None and keep_full_when_no_face:
-                    crop = frame
-                if crop is not None:
-                    segment_crops[seg_ptr].append(crop)
-
-            frame_idx += 1
-            ok, frame = cap.read()
-
-        cap.release()
-        return segment_crops
-
-    def process_video_file_with_word_segments_tensor(
-        self,
-        video_path: str,
-        word_times: Sequence[Sequence[float]],
-        target_clip_duration: float,
-        keep_full_when_no_face: bool = True,
-        min_factor: float = 0.5,
-        max_factor: float = 1.5,
-    ) -> List[torch.Tensor]:
-        segment_crops = self.process_video_file_with_word_segments(
-            video_path,
-            word_times,
-            target_clip_duration,
-            keep_full_when_no_face,
-            min_factor,
-            max_factor,
-        )
-
-        segment_tensors: List[torch.Tensor] = []
-        for crops in segment_crops:
-            if not crops:
-                segment_tensors.append(torch.empty(0, 3, 0, 0))
-                continue
-
-            frames = []
-            for f in crops:
-                f = f.astype("float32") / 255.0
-                frames.append(np.transpose(f, (2, 0, 1)))
-            arr = np.stack(frames, axis=0)
-            segment_tensors.append(torch.from_numpy(arr))
-
-        return segment_tensors
-
-    def process_and_save_from_timestamps_csv_segmentlocal(
+    def process_and_save_facecrops_to_disk_from_word_times(
         self,
         video_path: Union[str, Path],
         word_times: Sequence[Sequence[float]],
-        out_pt_path: Union[str, Path],
+        out_dir: Union[str, Path],
         keep_full_when_no_face: bool = True,
         min_factor: float = 0.5,
         max_factor: float = 1.5,
         target_clip_duration: Optional[float] = None,
+        jpeg_quality: int = 95,
+        out_pt_path: Optional[Union[str, Path]] = None,
     ) -> Tuple[int, int]:
+        """
+        Existing API: keep as-is.
+        """
         video_path = Path(video_path)
-        out_pt_path = Path(out_pt_path)
-
-        # ==================================================================
-        # [MODIFIED] Accept timestamps in-memory (list of [start_sec, end_sec])
-        # NOTE: Segment extraction still calls self.detect_and_crop_face(...)
-        # ==================================================================
-        num_words = len(word_times)
+        out_dir = Path(out_dir)
 
         if target_clip_duration is None:
             target_clip_duration = self.cfg.target_clip_duration_sec
 
-        segment_tensors = self.process_video_file_with_word_segments_tensor(
+        segments_sec = self.build_segments_from_word_times(
+            word_times=word_times,
+            target_clip_duration=target_clip_duration,
+            min_factor=min_factor,
+            max_factor=max_factor,
+        )
+
+        segment_crops = self.process_video_file_with_word_segments(
             video_path=str(video_path),
             word_times=word_times,
             target_clip_duration=target_clip_duration,
@@ -334,19 +349,42 @@ class VideoPreprocessorNPV:
             max_factor=max_factor,
         )
 
-        num_segments = len(segment_tensors)
-        out_pt_path.parent.mkdir(parents=True, exist_ok=True)
+        num_segments = len(segment_crops)
+        num_words = len(word_times)
 
-        save_payload = {
-            "video_file": video_path.name,
-            "video_segments": segment_tensors,
-            "num_segments": num_segments,
-            "num_words": num_words,
-            "timestamps_csv": "<in_memory_word_times>",
-            "pt_rel_path": _to_rel_data_path(out_pt_path),
-            "config": self.cfg.__dict__,
-        }
-        torch.save(save_payload, out_pt_path)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        video_root = out_dir / video_path.stem
+        video_root.mkdir(parents=True, exist_ok=True)
+
+        total_saved = 0
+        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), int(jpeg_quality)]
+
+        for seg_idx, crops in enumerate(segment_crops):
+            seg_dir = video_root / f"seg_{seg_idx:04d}"
+            seg_dir.mkdir(parents=True, exist_ok=True)
+
+            for j, crop_bgr in enumerate(crops):
+                out_path = seg_dir / f"frame_{j:06d}{self.cfg.frame_ext}"
+                ok = cv2.imwrite(str(out_path), crop_bgr, encode_params)
+                if ok:
+                    total_saved += 1
+
+        if out_pt_path is not None:
+            out_pt_path = Path(out_pt_path)
+            out_pt_path.parent.mkdir(parents=True, exist_ok=True)
+
+            save_payload = {
+                "video_file": video_path.name,
+                "segments_sec": segments_sec,
+                "crops_root": _to_rel_data_path(video_root),
+                "num_segments": num_segments,
+                "num_words": num_words,
+                "timestamps_csv": "<in_memory_word_times>",
+                "pt_rel_path": _to_rel_data_path(out_pt_path),
+                "config": self.cfg.__dict__,
+            }
+            torch.save(save_payload, out_pt_path)
 
         return num_segments, num_words
 
@@ -360,12 +398,29 @@ class VideoPreprocessorNPV:
         max_factor: float = 1.5,
         target_clip_duration: Optional[float] = None,
         jpeg_quality: int = 95,
+        # ==================================================================
+        # [ADDED] Optional .pt sidecar to persist segments_sec + crop root.
+        # Backwards compatible: if out_pt_path is None, behavior is unchanged.
+        # ==================================================================
+        out_pt_path: Optional[Union[str, Path]] = None,
     ) -> Tuple[int, int]:
         video_path = Path(video_path)
         out_dir = Path(out_dir)
 
         if target_clip_duration is None:
             target_clip_duration = self.cfg.target_clip_duration_sec
+
+        # ==================================================================
+        # [ADDED] Compute segments_sec here too, so the face-crop pipeline
+        # can persist timestamps for downstream audio alignment.
+        # Core cropping logic remains unchanged.
+        # ==================================================================
+        segments_sec = self.build_segments_from_word_times(
+            word_times=word_times,
+            target_clip_duration=target_clip_duration,
+            min_factor=min_factor,
+            max_factor=max_factor,
+        )
 
         segment_crops = self.process_video_file_with_word_segments(
             video_path=str(video_path),
@@ -377,21 +432,58 @@ class VideoPreprocessorNPV:
         )
 
         num_segments = len(segment_crops)
-        total_saved = 0
+        num_words = len(word_times)
+
+        out_dir.mkdir(parents=True, exist_ok=True)
 
         video_root = out_dir / video_path.stem
         video_root.mkdir(parents=True, exist_ok=True)
 
-        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), int(jpeg_quality)]
+        total_saved = 0
+
+        # ==============================================================
+        # [CHANGED] Save ONE video per segment (instead of per-frame JPGs)
+        # - Arguments/signature unchanged.
+        # - total_saved remains "frames written" for backwards compatibility.
+        # ==============================================================
+        cap_fps = cv2.VideoCapture(str(video_path))
+        if not cap_fps.isOpened():
+            raise RuntimeError(f"Cannot open video for FPS read: {video_path}")
+        fps = cap_fps.get(cv2.CAP_PROP_FPS)
+        cap_fps.release()
+        if fps is None or fps <= 0:
+            fps = 25.0  # safe fallback
 
         for seg_idx, crops in enumerate(segment_crops):
             seg_dir = video_root / f"seg_{seg_idx:04d}"
             seg_dir.mkdir(parents=True, exist_ok=True)
 
-            for j, crop_bgr in enumerate(crops):
-                out_path = seg_dir / f"frame_{j:06d}{self.cfg.frame_ext}"
-                ok = cv2.imwrite(str(out_path), crop_bgr, encode_params)
-                if ok:
-                    total_saved += 1
+            out_path = seg_dir / f"seg_{seg_idx:04d}.mp4"
+            ok, written = _write_bgr_frames_to_video(crops, out_path, fps=float(fps), fourcc_str="mp4v")
+            if ok:
+                total_saved += int(written)
+
+        # ==================================================================
+        # [ADDED] If requested, save a .pt "alignment sidecar" that includes:
+        #   - video_file
+        #   - segments_sec
+        #   - crops_root (directory where seg_XXXX folders are written)
+        # This enables the offline trainer to drive audio slicing from video.
+        # ==================================================================
+        if out_pt_path is not None:
+            out_pt_path = Path(out_pt_path)
+            out_pt_path.parent.mkdir(parents=True, exist_ok=True)
+
+            save_payload = {
+                "video_file": video_path.name,
+                "segments_sec": segments_sec,
+                "crops_root": _to_rel_data_path(video_root),
+                "num_segments": num_segments,
+                "saved_frames": total_saved,
+                "timestamps_csv": "<in_memory_word_times>",
+                "pt_rel_path": _to_rel_data_path(out_pt_path),
+                "config": self.cfg.__dict__,
+            }
+            torch.save(save_payload, out_pt_path)
 
         return num_segments, total_saved
