@@ -133,11 +133,37 @@ class VideoPreprocessorNPV:
         if FaceAnalysis is not None:
             try:
                 providers = self.cfg.providers_gpu if self.cfg.use_gpu_if_available else self.cfg.providers_cpu
+
+                # ================================================================
+                # [ADDED] Ensure ONNXRuntime CUDA EP uses the correct GPU per-rank.
+                # Without provider_options, ORT often defaults to device_id=0,
+                # causing ALL DDP ranks to run heavy inference on GPU 0.
+                #
+                # We keep semantics identical:
+                # - still CUDAExecutionProvider when GPU is enabled
+                # - still uses ctx_id for InsightFace internal logic
+                # - but now also pins ORT to ctx_id for the CUDA provider
+                # ================================================================
+                provider_options = None
+                if self.cfg.use_gpu_if_available:
+                    # Match providers order: ["CUDAExecutionProvider", "CPUExecutionProvider"]
+                    # provider_options must be same length as providers list.
+                    opts = []
+                    for p in list(providers):
+                        if p == "CUDAExecutionProvider":
+                            opts.append({"device_id": int(self.cfg.ctx_id)})
+                        else:
+                            opts.append({})
+                    provider_options = opts
+
                 self.face_app = FaceAnalysis(
                     name=self.cfg.insightface_model_name,
                     providers=list(providers),
+                    # [ADDED] Critical to avoid all ranks using GPU 0
+                    provider_options=provider_options,
                 )
                 self.face_app.prepare(ctx_id=int(self.cfg.ctx_id), det_size=self.cfg.detector_size)
+
             except Exception:
                 self.face_app = None
 
