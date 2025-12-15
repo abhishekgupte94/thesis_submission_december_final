@@ -220,6 +220,69 @@ class AudioPreprocessorNPV:
         mel_segments: List[Tensor] = [mel_stack[i] for i in range(mel_stack.shape[0])]
         return mel_segments, segments
 
+    # ==================================================================
+    # [ADDED] NEW: segment-driven API (NO segmentation logic inside audio)
+    #
+    # This is the exact path you want:
+    # - Offline trainer loads video .pt for clip_id
+    # - Reads segments_sec from that .pt
+    # - Calls this method so audio slicing matches video exactly
+    # ==================================================================
+    def process_and_save_from_segments_sec_segmentlocal(
+        self,
+        audio_path: Union[str, Path],
+        segments_sec: Sequence[Tuple[float, float]],
+        out_pt_path: Union[str, Path],
+        log_csv_path: Optional[Union[str, Path]] = None,
+    ) -> Tuple[int, int]:
+        audio_path = Path(audio_path)
+        out_pt_path = Path(out_pt_path)
+
+        # [ADDED] num_words is no longer meaningful here; return 0 for compatibility
+        num_words = 0
+
+        wav, sr = self._load_audio_file(audio_path)
+        wav = self._standardize_waveform(wav, sr)
+
+        clips = self.slice_waveform_with_segments(wav, segments_sec)
+        mel_segments: List[Tensor] = [self._waveform_to_logmel(c) for c in clips]
+        num_segments = len(mel_segments)
+
+        # dtype safety (same checks style as before)
+        for idx, mel in enumerate(mel_segments):
+            if not isinstance(mel, torch.Tensor):
+                raise TypeError(f"mel_segments[{idx}] is not a Tensor (got {type(mel)})")
+            if mel.ndim != 2:
+                raise ValueError(f"Expected mel_segments[{idx}] shape (n_mels, T), got {tuple(mel.shape)}")
+            if mel.shape[0] != self.n_mels:
+                raise ValueError(f"mel_segments[{idx}].shape[0]={mel.shape[0]} expected {self.n_mels}")
+            if mel.dtype != torch.float32:
+                mel_segments[idx] = mel.float()
+
+        out_pt_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Save ONLY the 3 requested keys (unchanged format)
+        # save_payload = {
+        #     "audio_file": audio_path.name,
+        #     "mel_segments": mel_segments,
+        #     "segments_sec": list(segments_sec),
+        # }
+        # torch.save(save/_payload, out_pt_path)
+        torch.save(mel_segments, out_pt_path)
+        if log_csv_path is not None:
+            log_csv_path = Path(log_csv_path)
+            log_csv_path.parent.mkdir(parents=True, exist_ok=True)
+            file_exists = log_csv_path.exists()
+
+            pt_rel_path = _to_rel_data_path(out_pt_path)
+            with log_csv_path.open("a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                if not file_exists:
+                    writer.writerow(["audio_file", "pt_rel_path", "num_words", "num_segments"])
+                writer.writerow([audio_path.name, pt_rel_path, num_words, num_segments])
+
+        return num_segments, num_words
+
     def process_and_save_from_timestamps_csv_segmentlocal(
         self,
         audio_path: Union[str, Path],
@@ -228,12 +291,36 @@ class AudioPreprocessorNPV:
         log_csv_path: Optional[Union[str, Path]] = None,
         min_factor: float = 0.5,
         max_factor: float = 1.5,
+        # ==================================================================
+        # [ADDED] Optional segments_sec override.
+        # If provided, we DO NOT create segments from word_times.
+        # This preserves the old caller interface but supports your new flow.
+        # ==================================================================
+        segments_sec: Optional[Sequence[Tuple[float, float]]] = None,
     ) -> Tuple[int, int]:
         """
         Offline convenience wrapper.
 
         NOTE: Signature/name unchanged to avoid breaking callers.
+
+        [MODIFIED]
+        - If segments_sec is provided (from video .pt), we bypass ALL
+          word_time-based segmentation and slice audio directly.
         """
+        # ==================================================================
+        # [MODIFIED] New primary path: use segments_sec if provided
+        # ==================================================================
+        if segments_sec is not None:
+            return self.process_and_save_from_segments_sec_segmentlocal(
+                audio_path=audio_path,
+                segments_sec=segments_sec,
+                out_pt_path=out_pt_path,
+                log_csv_path=log_csv_path,
+            )
+
+        # ------------------------------------------------------------------
+        # Legacy behavior kept intact (only used if segments_sec is NOT provided)
+        # ------------------------------------------------------------------
         audio_path = Path(audio_path)
         out_pt_path = Path(out_pt_path)
 
@@ -262,12 +349,6 @@ class AudioPreprocessorNPV:
 
         out_pt_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # ==================================================================
-        # [MODIFIED] Save ONLY the 3 requested keys (and nothing else)
-        #           - audio_file
-        #           - mel_segments
-        #           - segments_sec
-        # ==================================================================
         save_payload = {
             "audio_file": audio_path.name,
             "mel_segments": mel_segments,
@@ -275,7 +356,6 @@ class AudioPreprocessorNPV:
         }
         torch.save(save_payload, out_pt_path)
 
-        # NOTE: logging behavior unchanged; just logs minimal info.
         if log_csv_path is not None:
             log_csv_path = Path(log_csv_path)
             log_csv_path.parent.mkdir(parents=True, exist_ok=True)
