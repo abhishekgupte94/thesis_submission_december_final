@@ -1,451 +1,397 @@
-# video_preprocessor_npv.py
-
-"""
-VideoPreprocessorNPV
-
-Paper-safe, NPVForensics-style video preprocessing class,
-adapted for use inside PyTorch Lightning DataModules / DataLoaders.
-
-It:
-    - reads a video file
-    - extracts EVERY frame (no subsampling, no clipping by default)
-    - uses RetinaFace to detect the largest face per frame
-    - enlarges the bounding box and crops the face region
-    - saves cropped frames to disk
-
-[DL-INTEGRATION]:
-    - RetinaFace detector is lazily created per worker.
-    - Detector object is excluded from pickling to avoid issues with
-      num_workers>0.
-
-[TEMPORAL CLIPPING – OPTION B]:
-    - We add helpers that:
-        * Build NPV-style temporal segments from word timestamps
-          (same logic as in AudioPreprocessorNPV).
-        * Map those segments to frame index ranges using video FPS.
-        * Group per-frame face crops into clip-level lists, aligned
-          with the audio segments.
-
-    - This does NOT change the default behaviour of extract_frames()
-      or process_video_file(); it simply provides additional utilities
-      the Dataset can call to obtain VA-aligned frame clips.
-"""
+#!/usr/bin/env python
+# VideoPreprocessorNPV.py
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple, List, Sequence
+from typing import List, Optional, Sequence, Tuple, Union
 
-import numpy as np
+import csv
 import cv2
-from tqdm import tqdm
-
+import numpy as np
 import torch
-from torch import Tensor
-import torchvision
 
-# Optional import for RetinaFace
+# ======================================================================
+# [ADDED] InsightFace import (FaceAnalysis uses onnxruntime / onnxruntime-gpu)
+# ======================================================================
 try:
     from insightface.app import FaceAnalysis
-except ImportError:
+except Exception:
     FaceAnalysis = None  # type: ignore
+
+
+def _get_project_root() -> Path:
+    """Best-effort detection of the project root (``thesis_main_files``)."""
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if parent.name == "thesis_main_files":
+            return parent
+    return here.parents[3]
+
+
+def _to_rel_data_path(path: Path) -> str:
+    """Convert an absolute path to a POSIX-style path relative to project root."""
+    project_root = _get_project_root()
+    try:
+        return path.resolve().relative_to(project_root).as_posix()
+    except Exception:
+        return path.as_posix()
+
+
+def load_word_times_from_whisper_csv(
+    csv_path: Union[str, Path],
+) -> List[Tuple[float, float]]:
+    """Read Whisper-style word timestamps CSV -> [(start_sec, end_sec), ...]"""
+    csv_path = Path(csv_path)
+    word_times: List[Tuple[float, float]] = []
+
+    with csv_path.open("r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                s = float(row["start"])
+                e = float(row["end"])
+            except (KeyError, ValueError):
+                continue
+            if e > s:
+                word_times.append((s, e))
+
+    word_times.sort(key=lambda x: x[0])
+    return word_times
+
+
+@dataclass
+class VideoPreprocessorConfig:
+    detector_size: Tuple[int, int] = (640, 640)
+    crop_resize: Optional[Tuple[int, int]] = (240, 240)
+    frame_ext: str = ".jpg"
+
+    save_raw_frames: bool = False
+    save_cropped_frames: bool = True
+    target_clip_duration_sec: float = 2.0
+
+    insightface_model_name: str = "buffalo_l"
+    ctx_id: int = 0
+    use_gpu_if_available: bool = True
+    providers_gpu: Tuple[str, ...] = ("CUDAExecutionProvider", "CPUExecutionProvider")
+    providers_cpu: Tuple[str, ...] = ("CPUExecutionProvider",)
 
 
 class VideoPreprocessorNPV:
     """
-    VideoPreprocessorNPV
+    NPV-style VIDEO preprocessor (segment-based, AV-aligned).
 
-    A configurable video preprocessing class for extracting frame-level
-    face crops, designed to be used in offline preprocessing *or*
-    inside a Dataset/DataModule.
-
-    Parameters
-    ----------
-    enlarge_ratio : float, default=1.3
-        Enlargement factor for the face bounding box.
-
-    detector_name : str, default="retinaface_r50_v1"
-        Name of the RetinaFace model (insightface).
-
-    detector_ctx_id : int, default=0
-        Device id for RetinaFace. 0 = first GPU, -1 = CPU.
-
-    detector_size : (int, int), default=(640, 640)
-        Input size for the detector.
-
-    frame_ext : str, default=".jpg"
-        File extension for saved frames.
-
-    save_visual_debug : bool, default=False
-        Placeholder for future drawing/debugging hooks.
+    - Builds segments from word timestamps
+    - Single-pass frame->segment assignment (seg_ptr)
+    - Crops faces with InsightFace FaceAnalysis (largest face)
     """
 
-    def __init__(
-        self,
-        enlarge_ratio: float = 1.3,
-        detector_name: str = "retinaface_r50_v1",
-        detector_ctx_id: int = 0,
-        detector_size: Tuple[int, int] = (640, 640),
-        frame_ext: str = ".jpg",
-        save_visual_debug: bool = False,
-    ) -> None:
-        self.enlarge_ratio = enlarge_ratio
-        self.detector_name = detector_name
-        self.detector_ctx_id = detector_ctx_id
-        self.detector_size = detector_size
-        self.frame_ext = frame_ext
-        self.save_visual_debug = save_visual_debug
+    def __init__(self, cfg: Optional[VideoPreprocessorConfig] = None) -> None:
+        self.cfg = cfg or VideoPreprocessorConfig()
 
-        # [DL-INTEGRATION]: lazy detector init for DataLoader workers.
-        self._detector = None  # type: ignore
+        # ==================================================================
+        # [ADDED] Init InsightFace FaceAnalysis once
+        # ==================================================================
+        self.face_app = None
+        if FaceAnalysis is not None:
+            providers = list(self.cfg.providers_cpu)
+            ctx_id = -1
+            if self.cfg.use_gpu_if_available:
+                providers = list(self.cfg.providers_gpu)
+                ctx_id = self.cfg.ctx_id
 
-        # [NEW - temporal clipping] store last seen FPS for convenience
-        self._last_fps: float = 0.0
-
-    # ------------------------------------------------------------------
-    # [DL-INTEGRATION]: custom pickling to avoid detector in state
-    # ------------------------------------------------------------------
-    def __getstate__(self):
-        state = self.__dict__.copy()
-        state["_detector"] = None
-        return state
-
-    def __setstate__(self, state):
-        self.__dict__.update(state)
-        self._detector = None
-
-    # ------------------------------------------------------------------
-    # Detector initialization
-    # ------------------------------------------------------------------
-    def _init_detector(self) -> None:
-        """
-        Lazily initialize the RetinaFace detector.
-
-        [DL-INTEGRATION]: This is called per worker process on first use,
-        to avoid non-picklable state being copied across forks.
-        """
-        if self._detector is not None:
-            return
-        if FaceAnalysis is None:
-            raise ImportError(
-                "insightface is required for VideoPreprocessorNPV but not installed."
+            self.face_app = FaceAnalysis(
+                name=self.cfg.insightface_model_name,
+                providers=providers,
+                allowed_modules=["detection"],
             )
-        self._detector = FaceAnalysis(name=self.detector_name)
-        self._detector.prepare(ctx_id=self.detector_ctx_id, det_size=self.detector_size)
+            self.face_app.prepare(ctx_id=ctx_id, det_size=self.cfg.detector_size)
 
-    # ------------------------------------------------------------------
-    # Static helper to read video via torchvision (if needed in-memory)
-    # ------------------------------------------------------------------
-    @staticmethod
-    def read_video(path: str) -> Tuple[Tensor, Tensor, dict]:
-        """
-        Read video and audio from file using torchvision.
-        """
-        video, audio, info = torchvision.io.read_video(path, pts_unit="sec")
-        video = video.permute(0, 3, 1, 2) / 255.0
-        if audio.numel() > 0:
-            audio = audio.permute(1, 0)
-        return video, audio, info
-
-    # ------------------------------------------------------------------
-    # Face helpers
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _enlarge_bbox(
-        bbox: Tuple[int, int, int, int],
-        img_w: int,
-        img_h: int,
-        ratio: float,
-    ) -> Tuple[int, int, int, int]:
-        x1, y1, x2, y2 = bbox
-        w = x2 - x1
-        h = y2 - y1
-        cx = x1 + w / 2.0
-        cy = y1 + h / 2.0
-
-        new_w = w * ratio
-        new_h = h * ratio
-
-        nx1 = int(round(cx - new_w / 2.0))
-        ny1 = int(round(cy - new_h / 2.0))
-        nx2 = int(round(cx + new_w / 2.0))
-        ny2 = int(round(cy + new_h / 2.0))
-
-        nx1 = max(0, nx1)
-        ny1 = max(0, ny1)
-        nx2 = min(img_w, nx2)
-        ny2 = min(img_h, ny2)
-
-        return nx1, ny1, nx2, ny2
-
-    def _detect_largest_face(self, img: np.ndarray) -> Optional[Tuple[int, int, int, int]]:
-        """
-        Run RetinaFace on BGR image and return the largest face bbox.
-        """
-        self._init_detector()
-        faces = self._detector.get(img)  # type: ignore[attr-defined]
-        if len(faces) == 0:
-            return None
-        largest = max(
-            faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1])
-        )
-        x1, y1, x2, y2 = largest.bbox.astype(int)
-        return x1, y1, x2, y2
-
-    # ------------------------------------------------------------------
-    # Core per-video processing
-    # ------------------------------------------------------------------
-    def extract_frames(
-        self,
-        video_path: str,
-        output_dir: str,
-    ) -> List[Path]:
-        """
-        Extract EVERY frame from a video and save to disk.
-        """
-        output_dir_path = Path(output_dir)
-        output_dir_path.mkdir(parents=True, exist_ok=True)
-
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            raise FileNotFoundError(f"Could not open video: {video_path}")
-
-        frame_paths: List[Path] = []
-        frame_idx = 1
-
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        self._last_fps = float(fps) if fps > 0 else 0.0  # [NEW - temporal clipping]
-        print(f"[VideoPreprocessorNPV] {video_path} | reported FPS: {fps:.2f}")
-
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-
-            frame_name = f"{frame_idx:04d}{self.frame_ext}"
-            frame_path = output_dir_path / frame_name
-            cv2.imwrite(str(frame_path), frame)
-            frame_paths.append(frame_path)
-            frame_idx += 1
-
-        cap.release()
-        print(
-            f"[VideoPreprocessorNPV] Extracted {len(frame_paths)} frames "
-            f"to {output_dir_path}"
-        )
-        return frame_paths
-
-    def crop_faces_from_frames(
-        self,
-        source_frames_dir: str,
-        target_frames_dir: str,
-        keep_full_when_no_face: bool = True,
-    ) -> List[Path]:
-        """
-        Detect and crop faces from EVERY frame in source_frames_dir;
-        save results to target_frames_dir.
-        """
-        src_dir = Path(source_frames_dir)
-        tgt_dir = Path(target_frames_dir)
-        tgt_dir.mkdir(parents=True, exist_ok=True)
-
-        frame_files = sorted(
-            [p for p in src_dir.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"}]
-        )
-
-        cropped_paths: List[Path] = []
-
-        if len(frame_files) == 0:
-            print(f"[VideoPreprocessorNPV] No frames found in {source_frames_dir}")
-            return cropped_paths
-
-        for frame_path in tqdm(frame_files, desc="Cropping faces"):
-            img = cv2.imread(str(frame_path))
-            if img is None:
-                continue
-
-            h, w = img.shape[:2]
-            bbox = self._detect_largest_face(img)
-
-            if bbox is None:
-                if keep_full_when_no_face:
-                    crop = img
-                else:
-                    continue
-            else:
-                ex1, ey1, ex2, ey2 = self._enlarge_bbox(
-                    bbox, img_w=w, img_h=h, ratio=self.enlarge_ratio
-                )
-                crop = img[ey1:ey2, ex1:ex2]
-
-            out_path = tgt_dir / frame_path.name
-            cv2.imwrite(str(out_path), crop)
-            cropped_paths.append(out_path)
-
-        print(
-            f"[VideoPreprocessorNPV] Cropped {len(cropped_paths)} frames "
-            f"to {target_frames_dir}"
-        )
-        return cropped_paths
-
-    def process_video_file(
-        self,
-        video_path: str,
-        frames_root: str,
-        cropped_root: str,
-        video_id: Optional[str] = None,
-        keep_full_when_no_face: bool = True,
-    ) -> Tuple[List[Path], List[Path]]:
-        """
-        High-level pipeline:
-            1) Extract every frame to frames_root/<video_id>
-            2) Crop faces to cropped_root/<video_id>
-        """
-        video_path_str = str(video_path)
-        video_stem = video_id if video_id is not None else Path(video_path_str).stem
-
-        frames_dir = Path(frames_root) / video_stem
-        cropped_dir = Path(cropped_root) / video_stem
-
-        raw_frame_paths = self.extract_frames(video_path_str, str(frames_dir))
-        cropped_paths = self.crop_faces_from_frames(
-            source_frames_dir=str(frames_dir),
-            target_frames_dir=str(cropped_dir),
-            keep_full_when_no_face=keep_full_when_no_face,
-        )
-        return raw_frame_paths, cropped_paths
-
-    # [DL-INTEGRATION]: optional transform-like interface for Dataset
-    def __call__(self, video_path: str) -> List[Path]:
-        """
-        Transform-style interface for offline preprocessing inside a Dataset.
-
-        NOTE:
-            In practice you probably want to run this offline rather than
-            per-sample during training, due to RetinaFace cost.
-        """
-        tmp_frames_root = "tmp_frames"
-        tmp_cropped_root = "tmp_cropped"
-        _, cropped = self.process_video_file(
-            video_path=video_path,
-            frames_root=tmp_frames_root,
-            cropped_root=tmp_cropped_root,
-            video_id=None,
-            keep_full_when_no_face=True,
-        )
-        return cropped
-
-    # ------------------------------------------------------------------
-    # [NEW - temporal clipping] NPV-style segment helpers
-    # ------------------------------------------------------------------
-    @staticmethod
     def build_segments_from_word_times(
+        self,
         word_times: Sequence[Sequence[float]],
         target_clip_duration: float,
         min_factor: float = 0.5,
         max_factor: float = 1.5,
     ) -> List[Tuple[float, float]]:
-        """
-        Same logic as AudioPreprocessorNPV.build_segments_from_word_times,
-        duplicated here so the video side can be used independently if
-        desired.
-
-        For details of behaviour and parameters, see the audio version.
-        """
         if not word_times:
             return []
 
-        word_times_sorted = sorted(word_times, key=lambda x: x[0])
+        segments = [(float(s), float(e)) for s, e in word_times]
 
-        min_dur = min_factor * target_clip_duration
-        max_dur = max_factor * target_clip_duration
+        def dur(seg):
+            return seg[1] - seg[0]
 
-        segments: List[Tuple[float, float]] = []
-        i = 0
-        n = len(word_times_sorted)
+        merged: List[Tuple[float, float]] = []
+        cur = segments[0]
+        for s, e in segments[1:]:
+            if dur(cur) < min_factor * target_clip_duration:
+                cur = (cur[0], e)
+            else:
+                merged.append(cur)
+                cur = (s, e)
+        merged.append(cur)
 
-        while i < n:
-            seg_start = float(word_times_sorted[i][0])
-            seg_end = float(word_times_sorted[i][1])
-            j = i + 1
+        final: List[Tuple[float, float]] = []
+        for s, e in merged:
+            d = e - s
+            if d <= max_factor * target_clip_duration:
+                final.append((s, e))
+            else:
+                n = max(int(round(d / target_clip_duration)), 1)
+                step = d / n
+                for i in range(n):
+                    cs = s + i * step
+                    ce = min(e, cs + step)
+                    if ce > cs:
+                        final.append((cs, ce))
+        return final
 
-            while j < n:
-                candidate_end = float(word_times_sorted[j][1])
-                candidate_dur = candidate_end - seg_start
-
-                if candidate_dur > max_dur:
-                    break
-
-                seg_end = candidate_end
-                j += 1
-
-                if seg_end - seg_start >= target_clip_duration:
-                    break
-
-            seg_dur = seg_end - seg_start
-
-            if seg_dur < min_dur and j < n:
-                candidate_end = float(word_times_sorted[j][1])
-                candidate_dur = candidate_end - seg_start
-                if candidate_dur <= max_dur:
-                    seg_end = candidate_end
-                    j += 1
-                    seg_dur = seg_end - seg_start
-
-            if seg_end > seg_start:
-                segments.append((seg_start, seg_end))
-
-            i = max(j, i + 1)
-
-        return segments
-
-    @staticmethod
-    def segments_to_frame_indices(
-        segments: Sequence[Tuple[float, float]],
-        fps: float,
-        num_frames: int,
-    ) -> List[Tuple[int, int]]:
+    # ------------------------------------------------------------------
+    # [MODIFIED] Face detection + cropping is enforced here
+    # ------------------------------------------------------------------
+    def detect_and_crop_face(self, frame_bgr: np.ndarray) -> Optional[np.ndarray]:
         """
-        Convert temporal segments (in seconds) to discrete frame index ranges
-        [start_idx, end_idx) for a video with a given FPS and number of frames.
+        Uses InsightFace FaceAnalysis (detection-only) to crop the largest face.
+
+        IMPORTANT:
+        - InsightFace expects OpenCV images directly (BGR).
+        - So we do NOT convert to RGB here.
         """
-        if fps <= 0:
-            raise ValueError(f"FPS must be positive, got {fps}")
+        if self.face_app is None:
+            # fallback: keep pipeline alive (treat full frame as crop)
+            return frame_bgr
 
-        indices: List[Tuple[int, int]] = []
-        for start_sec, end_sec in segments:
-            start_idx = int(np.floor(start_sec * fps))
-            end_idx = int(np.ceil(end_sec * fps))
+        faces = self.face_app.get(frame_bgr)  # BGR frame directly
+        if not faces:
+            return None
 
-            start_idx = max(0, min(start_idx, num_frames - 1))
-            end_idx = max(start_idx + 1, min(end_idx, num_frames))
+        best_bbox = None
+        best_area = -1.0
+        for f in faces:
+            bbox = getattr(f, "bbox", None)
+            if bbox is None:
+                continue
+            x1, y1, x2, y2 = bbox.astype(np.float32)
+            area = max(0.0, (x2 - x1)) * max(0.0, (y2 - y1))
+            if area > best_area:
+                best_area = area
+                best_bbox = (x1, y1, x2, y2)
 
-            indices.append((start_idx, end_idx))
-        return indices
+        if best_bbox is None:
+            return None
 
-    @staticmethod
-    def group_frame_paths_by_segments(
-        frame_paths: Sequence[Path],
-        frame_ranges: Sequence[Tuple[int, int]],
-    ) -> List[List[Path]]:
-        """
-        Given a list of sorted frame_paths and a list of [start_idx, end_idx)
-        ranges, group the paths into clip-level lists.
+        x1, y1, x2, y2 = best_bbox
+        h, w = frame_bgr.shape[:2]
 
-        Returns
-        -------
-        clips:
-            List of lists; clips[i] contains frame paths corresponding to
-            segment i. This is designed to be aligned with the audio clips
-            produced by AudioPreprocessorNPV.process_file_with_word_segments().
-        """
-        sorted_paths = sorted(frame_paths)
-        num_frames = len(sorted_paths)
-        clips: List[List[Path]] = []
+        nx1 = int(max(0, np.floor(x1)))
+        ny1 = int(max(0, np.floor(y1)))
+        nx2 = int(min(w, np.ceil(x2)))
+        ny2 = int(min(h, np.ceil(y2)))
 
-        for (start_idx, end_idx) in frame_ranges:
-            s = max(0, min(start_idx, num_frames))
-            e = max(s, min(end_idx, num_frames))
-            clips.append(sorted_paths[s:e])
+        if nx2 <= nx1 or ny2 <= ny1:
+            return None
 
-        return clips
+        crop = frame_bgr[ny1:ny2, nx1:nx2]
+
+        if self.cfg.crop_resize is not None:
+            crop = cv2.resize(crop, self.cfg.crop_resize, interpolation=cv2.INTER_LINEAR)
+
+        return crop
+
+    def process_video_file_with_word_segments(
+        self,
+        video_path: str,
+        word_times: Sequence[Sequence[float]],
+        target_clip_duration: float,
+        keep_full_when_no_face: bool = True,
+        min_factor: float = 0.5,
+        max_factor: float = 1.5,
+    ) -> List[List[np.ndarray]]:
+        cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            raise RuntimeError(f"Cannot open video: {video_path}")
+
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        segments_sec = self.build_segments_from_word_times(
+            word_times,
+            target_clip_duration,
+            min_factor,
+            max_factor,
+        )
+
+        if not segments_sec:
+            cap.release()
+            return []
+
+        def t2f(t: float) -> int:
+            return int(round(t * fps))
+
+        segments_fidx: List[Tuple[int, int]] = []
+        for s, e in segments_sec:
+            fs = max(t2f(float(s)), 0)
+            fe = min(t2f(float(e)), num_frames)
+            if fe > fs:
+                segments_fidx.append((fs, fe))
+
+        if not segments_fidx:
+            cap.release()
+            return []
+
+        segment_crops: List[List[np.ndarray]] = [[] for _ in segments_fidx]
+
+        seg_ptr = 0
+        frame_idx = 0
+        ok, frame = cap.read()
+
+        while ok and frame_idx < num_frames and seg_ptr < len(segments_fidx):
+
+            while seg_ptr < len(segments_fidx) and frame_idx >= segments_fidx[seg_ptr][1]:
+                seg_ptr += 1
+
+            if seg_ptr >= len(segments_fidx):
+                break
+
+            fs, fe = segments_fidx[seg_ptr]
+
+            if fs <= frame_idx < fe:
+                crop = self.detect_and_crop_face(frame)
+                if crop is None and keep_full_when_no_face:
+                    crop = frame
+                if crop is not None:
+                    segment_crops[seg_ptr].append(crop)
+
+            frame_idx += 1
+            ok, frame = cap.read()
+
+        cap.release()
+        return segment_crops
+
+    def process_video_file_with_word_segments_tensor(
+        self,
+        video_path: str,
+        word_times: Sequence[Sequence[float]],
+        target_clip_duration: float,
+        keep_full_when_no_face: bool = True,
+        min_factor: float = 0.5,
+        max_factor: float = 1.5,
+    ) -> List[torch.Tensor]:
+        segment_crops = self.process_video_file_with_word_segments(
+            video_path,
+            word_times,
+            target_clip_duration,
+            keep_full_when_no_face,
+            min_factor,
+            max_factor,
+        )
+
+        segment_tensors: List[torch.Tensor] = []
+        for crops in segment_crops:
+            if not crops:
+                segment_tensors.append(torch.empty(0, 3, 0, 0))
+                continue
+
+            frames = []
+            for f in crops:
+                f = f.astype("float32") / 255.0
+                frames.append(np.transpose(f, (2, 0, 1)))
+            arr = np.stack(frames, axis=0)
+            segment_tensors.append(torch.from_numpy(arr))
+
+        return segment_tensors
+
+    def process_and_save_from_timestamps_csv_segmentlocal(
+        self,
+        video_path: Union[str, Path],
+        word_times: Sequence[Sequence[float]],
+        out_pt_path: Union[str, Path],
+        keep_full_when_no_face: bool = True,
+        min_factor: float = 0.5,
+        max_factor: float = 1.5,
+        target_clip_duration: Optional[float] = None,
+    ) -> Tuple[int, int]:
+        video_path = Path(video_path)
+        out_pt_path = Path(out_pt_path)
+
+        # ==================================================================
+        # [MODIFIED] Accept timestamps in-memory (list of [start_sec, end_sec])
+        # NOTE: Segment extraction still calls self.detect_and_crop_face(...)
+        # ==================================================================
+        num_words = len(word_times)
+
+        if target_clip_duration is None:
+            target_clip_duration = self.cfg.target_clip_duration_sec
+
+        segment_tensors = self.process_video_file_with_word_segments_tensor(
+            video_path=str(video_path),
+            word_times=word_times,
+            target_clip_duration=target_clip_duration,
+            keep_full_when_no_face=keep_full_when_no_face,
+            min_factor=min_factor,
+            max_factor=max_factor,
+        )
+
+        num_segments = len(segment_tensors)
+        out_pt_path.parent.mkdir(parents=True, exist_ok=True)
+
+        save_payload = {
+            "video_file": video_path.name,
+            "video_segments": segment_tensors,
+            "num_segments": num_segments,
+            "num_words": num_words,
+            "timestamps_csv": "<in_memory_word_times>",
+            "pt_rel_path": _to_rel_data_path(out_pt_path),
+            "config": self.cfg.__dict__,
+        }
+        torch.save(save_payload, out_pt_path)
+
+        return num_segments, num_words
+
+    def process_and_save_facecrops_to_disk_from_word_times_segmentlocal(
+        self,
+        video_path: Union[str, Path],
+        word_times: Sequence[Sequence[float]],
+        out_dir: Union[str, Path],
+        keep_full_when_no_face: bool = True,
+        min_factor: float = 0.5,
+        max_factor: float = 1.5,
+        target_clip_duration: Optional[float] = None,
+        jpeg_quality: int = 95,
+    ) -> Tuple[int, int]:
+        video_path = Path(video_path)
+        out_dir = Path(out_dir)
+
+        if target_clip_duration is None:
+            target_clip_duration = self.cfg.target_clip_duration_sec
+
+        segment_crops = self.process_video_file_with_word_segments(
+            video_path=str(video_path),
+            word_times=word_times,
+            target_clip_duration=target_clip_duration,
+            keep_full_when_no_face=keep_full_when_no_face,
+            min_factor=min_factor,
+            max_factor=max_factor,
+        )
+
+        num_segments = len(segment_crops)
+        total_saved = 0
+
+        video_root = out_dir / video_path.stem
+        video_root.mkdir(parents=True, exist_ok=True)
+
+        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), int(jpeg_quality)]
+
+        for seg_idx, crops in enumerate(segment_crops):
+            seg_dir = video_root / f"seg_{seg_idx:04d}"
+            seg_dir.mkdir(parents=True, exist_ok=True)
+
+            for j, crop_bgr in enumerate(crops):
+                out_path = seg_dir / f"frame_{j:06d}{self.cfg.frame_ext}"
+                ok = cv2.imwrite(str(out_path), crop_bgr, encode_params)
+                if ok:
+                    total_saved += 1
+
+        return num_segments, total_saved

@@ -66,7 +66,7 @@ from multiprocessing.pool import ThreadPool
 from typing import List, Optional, Set, Tuple
 
 import pandas as pd
-from yt_dlp import YoutubeDL
+from yt_dlp  import YoutubeDL
 
 
 # -----------------------------
@@ -667,7 +667,8 @@ def parse_args():
 
     parser.add_argument(
         "--csv",
-        required=True,
+        # required=True,
+        default="/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/data/raw/csv/AVSpeech/avspeech_train.csv",
         help="Path to CLEAN AVSpeech CSV (serial_id, yt_id, start_time, end_time, x, y).",
     )
     parser.add_argument(

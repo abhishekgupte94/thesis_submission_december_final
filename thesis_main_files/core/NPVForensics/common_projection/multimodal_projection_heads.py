@@ -1,56 +1,49 @@
+# multimodal_projection_heads.py
+
+from __future__ import annotations
+
 import torch
 from torch import nn
-from common_space_projector import CommonSpaceProjector
+
+from core.NPVForensics.common_projection.common_space_projector import CommonSpaceProjector
 
 
 class MultiModalProjectionHeads(nn.Module):
     """
-    Implements the Face-Audio projection heads for the Common Space S_fa.
+    Face + Audio projection heads into a shared common space (S_fa).
 
-    Paper Reference: Section 3.2 "Evolutionary Consistency Mining"
+    You said you're using ONLY face-audio InfoNCE.
+    So we define:
+      - g_a_to_fa : audio -> common space  (Linear+BN)
+      - g_f_to_fa : face  -> common space  (2-layer MLP + ReLU + BN)
 
-    Removed Viseme-Audio mappings (g_a->va, g_v->va) as per user constraint.
+    Inputs must be pooled to (N,D) before calling these heads.
     """
 
-    def __init__(
-            self,
-            d_a: int,  # audio feature dim
-            d_f: int,  # face feature dim
-            d_fa: int,  # common space dim for Face-Audio (S_fa)
-    ):
+    def __init__(self, d_a: int, d_f: int, d_common: int):
         super().__init__()
+        self.d_a = int(d_a)
+        self.d_f = int(d_f)
+        self.d_common = int(d_common)
 
-        # --- Face -> FA space (g_f->fa) ---
-        # The paper specifies a 2-layer projection with ReLU for visual features
-        # to handle higher semantic density/granularity.
-        self.g_f_to_fa = CommonSpaceProjector(
-            in_dim=d_f,
-            out_dim=d_fa,
-            num_layers=2,  # Inductive bias for visual stream
-            use_bn=True,
-        )
+        # Audio projector (simpler head)
+        self.g_a_to_fa = CommonSpaceProjector(in_dim=self.d_a, out_dim=self.d_common, num_layers=1)
 
-        # --- Audio -> FA space (g_a->fa) ---
-        # The paper specifies a linear projection (1-layer) for audio features.
-        self.g_a_to_fa = CommonSpaceProjector(
-            in_dim=d_a,
-            out_dim=d_fa,
-            num_layers=1,  # Inductive bias for audio stream
-            use_bn=True,
-        )
+        # Face projector (deeper head)
+        self.g_f_to_fa = CommonSpaceProjector(in_dim=self.d_f, out_dim=self.d_common, num_layers=2)
 
-    def forward(
-            self,
-            X_f: torch.Tensor,  # (B, T, d_f) or (B, d_f)
-            X_a: torch.Tensor,  # (B, T, d_a) or (B, d_a)
-    ):
+    def forward(self, X_a: torch.Tensor, X_f: torch.Tensor) -> dict:
         """
-        Projects Face and Audio features into the shared S_fa space.
-        """
-        Z_f_fa = self.g_f_to_fa(X_f)  # Face   in S_fa
-        Z_a_fa = self.g_a_to_fa(X_a)  # Audio  in S_fa
+        X_a: (N, d_a)
+        X_f: (N, d_f)
 
-        return {
-            "Z_f_fa": Z_f_fa,
-            "Z_a_fa": Z_a_fa,
-        }
+        Returns:
+          Z_a: (N, d_common)
+          Z_f: (N, d_common)
+        """
+        if X_a.dim() != 2 or X_f.dim() != 2:
+            raise ValueError(f"ProjectionHeads expect pooled (N,D). Got {X_a.shape}, {X_f.shape}")
+
+        Z_a = self.g_a_to_fa(X_a)
+        Z_f = self.g_f_to_fa(X_f)
+        return {"Z_a": Z_a, "Z_f": Z_f}

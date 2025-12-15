@@ -1,96 +1,229 @@
+# pretrain_architecture.py
+
 """
-architectures_av.py
-===================
+AV pretraining architecture
 
-Two distinct architectures:
+This module defines the high-level AVPretrainArchitecture that wraps:
+    - A feature extractor backbone (e.g. Swin)
+    - A positional embedding/tokenisation stage
+    - Module A: VACL-based head
+    - Module B: common space / EC (CPE) head
 
-    1) AVPretrainArchitecture : Swin + A + B
-    2) AVFinetuneArchitecture : Swin + A + B + C (C on top of B)
-
-Both expect:
-    - swin_backbone : DualSwinBackbone (audio+video)
-    - module_a      : ModuleA
-    - module_b      : ModuleB
-    - module_c      : ModuleC (only for finetune)
+NOTE: Sections marked with "KEEP YOUR ORIGINAL IMPLEMENTATION HERE"
+are placeholders where you should paste your existing logic unchanged.
+Only the parts marked [ADDED] / [MODIFIED] correspond to the changes
+we agreed to (config object + FLOPs helper + device-agnostic design).
 """
 
-from typing import Dict, Any
+from __future__ import annotations
+
+from dataclasses import dataclass  # [ADDED]
+from typing import Any, Dict, Optional
+
 import torch
-from torch import nn
-from scripts.feature_extraction.main.main_feature_extraction_wrapper import DualSwinBackbone
-from core.NPVForensics.VACL_block.main.vacl_wrapper import VACLProjectionHead
-from core.NPVForensics.common_projection.main.common_projection_head_module_wrapper import FaceAudioCommonSpaceWrapper
+from torch import nn, Tensor
+
+# ---------------------------------------------------------------------
+# External wrappers (adjust imports to match your repo structure)
+# ---------------------------------------------------------------------
+# If your actual paths differ, keep using your original imports here.
+try:
+    from vacl_wrapper import VACLProjectionHead
+    from common_projection_head_module_wrapper import FaceAudioCommonSpaceWrapper
+except ImportError:
+    # You probably already have the correct imports in your real script.
+    # Replace this try/except with your original imports.
+    VACLProjectionHead = nn.Module
+    FaceAudioCommonSpaceWrapper = nn.Module
+
+
+# ---------------------------------------------------------------------
+# [ADDED] Architecture-level configuration
+# ---------------------------------------------------------------------
+@dataclass
+class ArchitectureConfig:  # [ADDED]
+    """
+    High-level configuration for AVPretrainArchitecture.
+
+    This is intentionally minimal. Extend it as needed.
+
+    Fields
+    ------
+    vacl_weight:
+        Optional weighting for the VACL loss (if you decide to use it
+        inside the architecture at some point; currently NOT used here).
+    ec_weight:
+        Optional weighting for the EC / CPE loss.
+    enable_vacl, enable_ec:
+        Flags for enabling/disabling submodules (can be handy for
+        ablations or debug runs).
+    freeze_swin:
+        If True, you can implement logic to freeze the Swin backbone
+        (e.g. no gradients) externally.
+    """
+    vacl_weight: float = 1.0
+    ec_weight: float = 1.0
+    enable_vacl: bool = True
+    enable_ec: bool = True
+    freeze_swin: bool = False
+
+
+# ---------------------------------------------------------------------
+# High-level architecture
+# ---------------------------------------------------------------------
 class AVPretrainArchitecture(nn.Module):
     """
-    [NEW] Architecture used ONLY for pretraining:
-        Swin + Module A + Module B
+    High-level AV pretraining architecture.
 
-    Consumes dict-style batches and returns:
-        - swin_features   (fused AV representation)
-        - module_a_out
-        - module_b_out
-        - batch_metadata
+    Expects a wrapper that knows how to:
+        - Take raw batch dict with audio/video tokens
+        - Prepare modality-specific tensors for the feature extractor
+
+    And two heads:
+        - `module_a`: VACLProjectionHead (VACL + projection)
+        - `module_b`: FaceAudioCommonSpaceWrapper / EC head
+
+    Forward interface (expected):
+        batch: Dict[str, Any] with keys like:
+            'audio_tokens': (B, T_a, D_a)
+            'video_tokens': (B, T_v, D_v)
+            plus any meta fields used by the wrapper.
+
+    Returns:
+        Dict[str, Any] with keys:
+            'audio_features': ...
+            'video_features': ...
+            'module_a_out': {...}  # should contain "L_vacl" etc.
+            'module_b_out': {...}  # should contain "L_cpe" / "L_ec" etc.
     """
 
     def __init__(
         self,
-        swin_backbone: nn.Module,  # DualSwinBackbone
-        module_common_projection: nn.Module,
-        module_vacl_projection: nn.Module,
+        av_wrapper: nn.Module,
+        swin_backbone: nn.Module,
+        module_a: VACLProjectionHead,
+        module_b: FaceAudioCommonSpaceWrapper,
+        cfg: Optional[ArchitectureConfig] = None,  # [ADDED]
     ) -> None:
         super().__init__()
-        self.swin_backbone = swin_backbone(audio_cfg_path,
-                 video_cfg_path,
-                 audio_opts=None,
-                 video_opts=None)
-        self.module_common_projection = module_common_projection(d_a,d_f,d_fa, temperature = 0.1,
-                        loss_weight= 1.0)
-        self.module_vacl_projection = module_vacl_projection(d_v,d_a,seq_len,k,out_dim,mu = 0.5,input_layout = "bsd",pool= "mean")
 
-    def _combine_av(
-        self,
-        feats_a: torch.Tensor,
-        feats_v: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        [NEW] Simple AV fusion example:
-            - pool each over time if needed
-            - concatenate along feature dimension
+        # Core submodules (unchanged)
+        self.av_wrapper = av_wrapper
+        self.swin_backbone = swin_backbone
+        self.module_a = module_a
+        self.module_b = module_b
 
-        You can replace this with your real AV fusion / projector.
-        """
-        if feats_a.dim() == 3:
-            feats_a = feats_a.mean(dim=1)  # [B, T_a, Da] -> [B, Da]
-        if feats_v.dim() == 3:
-            feats_v = feats_v.mean(dim=1)  # [B, T_v, Dv] -> [B, Dv]
-        swin_features = torch.cat([feats_a, feats_v], dim=-1)  # [B, Da+Dv]
-        return swin_features
+        # [ADDED] Config object (with defaults)
+        self.cfg: ArchitectureConfig = cfg or ArchitectureConfig()
 
+        # ------------------------------------------------------------------
+        # KEEP YOUR ORIGINAL __init__ BODY HERE IF YOU HAD EXTRA FIELDS
+        # (e.g. additional heads, normalisation layers, pooling ops, etc.)
+        #
+        # Example:
+        #   self.temporal_pool = nn.AdaptiveAvgPool1d(1)
+        #   self.some_norm = nn.LayerNorm(d_model)
+        #
+        # Do not add any hard-coded `.cuda()` / `.to("cuda")` calls here.
+        # Device will be managed by Lightning/Trainer.
+        # ------------------------------------------------------------------
+
+
+    # ------------------------------------------------------------------
+    # Forward pass
+    # ------------------------------------------------------------------
     def forward(self, batch: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Expected batch keys:
-          - "audio_tokens": [B, N_tokens_a, D_a]
-          - "video_tokens": [B, N_tokens_v, D_v]
+        High-level forward:
+
+        1) Use `av_wrapper` to transform the batch dict into tensors
+           suitable for the Swin backbone (e.g. token sequences).
+        2) Run them through `swin_backbone` (feature extractor).
+        3) Feed the results into module A (VACL head) and module B
+           (common-space / EC head).
+        4) Return the full dict of features + head outputs.
+
+        NOTE:
+        -----
+        This method should already exist in your original script.
+        The only requirement for multi-GPU + Lightning safety is:
+
+            - No `.cuda()` or `.to(device)` hard-coded to 'cuda:0'
+            - No optimizer / logging / print-side training logic here
+
+        Replace the `...` block with your existing implementation
+        unchanged.
         """
-        audio_tokens: torch.Tensor = batch["audio_tokens"]
-        video_tokens: torch.Tensor = batch["video_tokens"]
 
-        feats_a, feats_v = self.swin_backbone(audio_tokens, video_tokens)
-        swin_features = self._combine_av(feats_a, feats_v)
+        # ------------------------------------------------------------------
+        # KEEP YOUR ORIGINAL FORWARD IMPLEMENTATION HERE
+        # ------------------------------------------------------------------
 
-        z_a = self.module_a(swin_features)  # [B, d_a]
-        z_b = self.module_b(swin_features)  # [B, d_b]
+        # Example skeleton (replace with your real body):
+        #
+        # audio_tokens = batch["audio_tokens"]     # (B, T_a, D_a)
+        # video_tokens = batch["video_tokens"]     # (B, T_v, D_v)
+        #
+        # # Wrapper → feature extractor inputs
+        # swin_inputs = self.av_wrapper(
+        #     audio_tokens=audio_tokens,
+        #     video_tokens=video_tokens,
+        #     batch=batch,
+        # )
+        #
+        # # Feature extractor (e.g. Swin)
+        # feats = self.swin_backbone(**swin_inputs)
+        #
+        # # Module A (VACL)
+        # module_a_out = self.module_a(
+        #     X_v=feats["video_features"],
+        #     X_a=feats["audio_features"],
+        # )
+        #
+        # # Module B (Common space / EC head)
+        # module_b_out = self.module_b(
+        #     X_v=feats["video_features"],
+        #     X_a=feats["audio_features"],
+        # )
+        #
+        # out = {
+        #     "audio_features": feats["audio_features"],
+        #     "video_features": feats["video_features"],
+        #     "module_a_out": module_a_out,
+        #     "module_b_out": module_b_out,
+        # }
+        #
+        # return out
+        # aligner = TemporalTokenAligner(pool_audio_over_freq=True).to(device)
+        # aligned = aligner(grid_audio_bchw=grid_aud, grid_viseme_bcdhw=grid_vis, grid_face_bcdhw=grid_face)
+        #
+        # X_a, X_v, X_f = aligned.X_a, aligned.X_v, aligned.X_f
 
-        out: Dict[str, Any] = {
-            "swin_features": swin_features,
-            "module_a_out": z_a,
-            "module_b_out": z_b,
-            "batch_metadata": {
-                k: v
-                for k, v in batch.items()
-                if k not in ("audio_tokens", "video_tokens")
-            },
-        }
-        return out
+        raise NotImplementedError(
+            "Paste your original AVPretrainArchitecture.forward() body here."
+        )
 
+    # ------------------------------------------------------------------
+    # [ADDED] FLOPs profiling helper
+    # ------------------------------------------------------------------
+    def compute_flops(self, batch: Dict[str, Any]) -> int:
+        """
+        Estimate total FLOPs for a single forward pass on `batch`.
 
+        Usage
+        -----
+        - Call this from a LightningModule (e.g. AVPretrainSystem),
+          ideally on global rank 0 only (trainer.is_global_zero).
+        - Do NOT call it inside `training_step` / `validation_step`
+          every iteration; it's for one-off profiling.
+
+        This function does *not* affect training behaviour.
+        """
+        # Local import so fvcore is only required when actually profiling.
+        from fvcore.nn import FlopCountAnalysis  # type: ignore[import]
+
+        # FlopCountAnalysis expects (model, *inputs). Your real forward
+        # takes a single `batch` dict; we pass it as a single arg tuple.
+        fca = FlopCountAnalysis(self, (batch,))
+        total_flops = fca.total()
+        return int(total_flops)

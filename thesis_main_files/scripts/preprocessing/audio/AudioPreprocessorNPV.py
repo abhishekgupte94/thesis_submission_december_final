@@ -1,420 +1,291 @@
 # audio_preprocessor_npv.py
 
-"""
-AudioPreprocessorNPV
-
-Paper-safe, NPVForensics-style audio preprocessing class,
-adapted for use inside PyTorch Lightning DataModules / DataLoaders.
-
-It:
-    - loads audio (file or tensor)
-    - converts to mono
-    - resamples to target_sr (e.g., 16 kHz)
-    - peak-normalizes
-    - computes log-mel spectrogram (n_mels, target_num_frames)
-    - optionally normalizes per utterance
-
-[DL-INTEGRATION]:
-    Heavy torchaudio transforms are lazily created per worker and are
-    excluded from pickling, so this class plays nicely with num_workers>0.
-
-[TEMPORAL CLIPPING – OPTION B]:
-    - We add a NPV-style, word-timestamp-driven temporal segmentation:
-        * Given word-level timestamps [[t0_start, t0_end], [t1_start, t1_end], ...]
-        * We group consecutive words into segments whose duration is
-          ~ one Mel clip length (≈ target_num_frames * hop_length / target_sr),
-          with allowable band [0.5x, 1.5x] of that duration.
-        * For each segment, we slice the waveform and compute an
-          individual (n_mels, target_num_frames) log-mel clip.
-
-    - This produces a sequence of clips that mirrors NPVForensics'
-      “segment fine-grained analysis” while respecting the paper’s
-      Mel clip length.
-"""
-
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple, List, Sequence
+from typing import List, Optional, Sequence, Tuple, Union
 
+import csv
 import torch
-from torch import Tensor
-import torch.nn.functional as F
 import torchaudio
-from einops import rearrange
+from torch import Tensor
+
+
+def _get_project_root() -> Path:
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if parent.name == "thesis_main_files":
+            return parent
+    return here.parents[3]
+
+
+def _to_rel_data_path(path: Path) -> str:
+    project_root = _get_project_root()
+    try:
+        rel = path.resolve().relative_to(project_root)
+        return rel.as_posix()
+    except Exception:
+        return path.as_posix()
+
+
+def build_segments_from_word_times(
+    word_times: Sequence[Sequence[float]],
+    target_clip_duration: float,
+    min_factor: float = 0.5,
+    max_factor: float = 1.5,
+) -> List[Tuple[float, float]]:
+    if not word_times:
+        return []
+
+    segments: List[Tuple[float, float]] = [(float(s), float(e)) for s, e in word_times]
+
+    def duration(seg: Tuple[float, float]) -> float:
+        return seg[1] - seg[0]
+
+    merged: List[Tuple[float, float]] = []
+    current = segments[0]
+    for s, e in segments[1:]:
+        if duration(current) < min_factor * target_clip_duration:
+            current = (current[0], e)
+        else:
+            merged.append(current)
+            current = (s, e)
+    merged.append(current)
+
+    final_segments: List[Tuple[float, float]] = []
+    for s, e in merged:
+        d = e - s
+        if d <= max_factor * target_clip_duration:
+            final_segments.append((s, e))
+        else:
+            n_chunks = max(int(round(d / target_clip_duration)), 1)
+            chunk_dur = d / n_chunks
+            for i in range(n_chunks):
+                cs = s + i * chunk_dur
+                ce = min(e, cs + chunk_dur)
+                if ce > cs:
+                    final_segments.append((cs, ce))
+
+    return final_segments
+
+
+@dataclass
+class AudioPreprocessorConfig:
+    target_sr: int = 16_000
+    n_fft: int = 400
+    hop_length: int = 160
+    n_mels: int = 80
+    target_num_frames: int = 250
+    eps: float = 1e-6
+    normalize_utterance: bool = True
 
 
 class AudioPreprocessorNPV:
-    """
-    AudioPreprocessorNPV
+    def __init__(self, cfg: Optional[AudioPreprocessorConfig] = None) -> None:
+        self.cfg = cfg or AudioPreprocessorConfig()
 
-    A configurable audio preprocessing class suitable for use in
-    PyTorch Lightning DataModules / DataLoaders.
+        self.target_sr = self.cfg.target_sr
+        self.n_fft = self.cfg.n_fft
+        self.hop_length = self.cfg.hop_length
+        self.n_mels = self.cfg.n_mels
+        self.target_num_frames = self.cfg.target_num_frames
+        self.eps = self.cfg.eps
+        self.normalize_utterance = self.cfg.normalize_utterance
 
-    Parameters
-    ----------
-    target_sr : int, default=16000
-        Target sampling rate for all audio.
+        self.mel_spectrogram = torchaudio.transforms.MelSpectrogram(
+            sample_rate=self.target_sr,
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            n_mels=self.n_mels,
+            center=True,
+            power=2.0,
+        )
 
-    n_fft : int, default=1024
-        FFT size for STFT (via MelSpectrogram).
-
-    win_length : int, default=400
-        Window size in samples.
-
-    hop_length : int, default=160
-        Hop size in samples.
-
-    n_mels : int, default=64
-        Number of mel bands.
-
-    f_min : float, default=50.0
-        Minimum frequency for mel filters.
-
-    f_max : float or None, default=None
-        Maximum frequency for mel filters. If None, uses sr / 2.
-
-    target_num_frames : int, default=96
-        Target time dimension length. Spectrogram is cropped/padded along
-        time to reach this length.
-
-    normalize : bool, default=True
-        If True, apply per-utterance mean/var normalization.
-    """
-
-    def __init__(
-        self,
-        target_sr: int = 16000,
-        n_fft: int = 1024,
-        win_length: int = 400,
-        hop_length: int = 160,
-        n_mels: int = 64,
-        f_min: float = 50.0,
-        f_max: Optional[float] = None,
-        target_num_frames: int = 96,
-        normalize: bool = True,
-    ) -> None:
-        self.target_sr = target_sr
-        self.n_fft = n_fft
-        self.win_length = win_length
-        self.hop_length = hop_length
-        self.n_mels = n_mels
-        self.f_min = f_min
-        self.f_max = f_max
-        self.target_num_frames = target_num_frames
-        self.normalize = normalize
-
-        # [DL-INTEGRATION]: heavy transforms are lazily created per worker.
-        self._mel_transform: Optional[torchaudio.transforms.MelSpectrogram] = None
-        self._db_transform: Optional[torchaudio.transforms.AmplitudeToDB] = None
-
-    # ------------------------------------------------------------------
-    # [DL-INTEGRATION]: ensure heavy objects are not pickled
-    # ------------------------------------------------------------------
-    def __getstate__(self):
-        """Custom pickling: drop heavy torchaudio transforms."""
-        state = self.__dict__.copy()
-        state["_mel_transform"] = None
-        state["_db_transform"] = None
-        return state
-
-    def __setstate__(self, state):
-        """Re-initialize heavy transforms lazily in each worker."""
-        self.__dict__.update(state)
-        self._mel_transform = None
-        self._db_transform = None
-
-    # ------------------------------------------------------------------
-    # [NEW - temporal clipping] Convenience: nominal Mel clip duration
-    # ------------------------------------------------------------------
-    @property
-    def clip_duration_seconds(self) -> float:
-        """
-        Approximate duration (in seconds) of one Mel clip, based on the
-        current STFT parameters.
-
-        We mirror the NPVForensics setting where audio is resampled to
-        16 kHz and converted into 96x64 log-mel spectrograms as input.
-        """
-        # Reasonable approximation: T frames * hop / sr
-        return float(self.target_num_frames * self.hop_length) / float(self.target_sr)
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-    def _ensure_transforms(self) -> None:
-        if self._mel_transform is None:
-            self._mel_transform = torchaudio.transforms.MelSpectrogram(
-                sample_rate=self.target_sr,
-                n_fft=self.n_fft,
-                win_length=self.win_length,
-                hop_length=self.hop_length,
-                f_min=self.f_min,
-                f_max=self.f_max,
-                n_mels=self.n_mels,
-                center=True,
-                pad_mode="reflect",
-                power=2.0,
-                normalized=False,
-            )
-        if self._db_transform is None:
-            self._db_transform = torchaudio.transforms.AmplitudeToDB(
-                stype="power", top_db=80.0
-            )
-
-    @staticmethod
-    def _load_audio_file(path: str) -> Tuple[Tensor, int]:
-        wav, sr = torchaudio.load(path)  # (C, T)
-        return wav, int(sr)
+    def _load_audio_file(self, path: Union[str, Path]) -> Tuple[Tensor, int]:
+        wav, sr = torchaudio.load(str(path))
+        return wav, sr
 
     def _standardize_waveform(self, wav: Tensor, sr: int) -> Tensor:
-        """
-        - Ensure mono
-        - Resample to target_sr
-        - Peak-normalize
-        """
-        if wav.ndim == 2:
-            if wav.size(0) > 1:
-                wav = wav.mean(dim=0, keepdim=True)
-        elif wav.ndim == 1:
+        if wav.dim() == 2 and wav.size(0) > 1:
+            wav = wav.mean(dim=0, keepdim=True)
+        elif wav.dim() == 1:
             wav = wav.unsqueeze(0)
-        else:
-            raise ValueError(f"Unexpected waveform shape: {tuple(wav.shape)}")
 
         if sr != self.target_sr:
-            wav = torchaudio.functional.resample(wav, sr, self.target_sr)
+            wav = torchaudio.functional.resample(wav, orig_freq=sr, new_freq=self.target_sr)
 
-        # Peak-normalize per utterance
-        peak = wav.abs().max()
-        if peak > 0:
-            wav = wav / peak
+        if self.normalize_utterance:
+            peak = wav.abs().max()
+            if peak > 0:
+                wav = wav / peak
 
-        return wav  # (1, T_resampled)
+        return wav.squeeze(0)
 
     def _waveform_to_logmel(self, wav: Tensor) -> Tensor:
-        """
-        Convert mono waveform (1, T) @ target_sr to
-        log-mel spectrogram of shape (n_mels, target_num_frames).
-        """
-        self._ensure_transforms()
-        assert self._mel_transform is not None
-        assert self._db_transform is not None
+        mel = self.mel_spectrogram(wav)
+        mel = torch.clamp(mel, min=self.eps)
+        mel = torch.log(mel)
 
-        mel = self._mel_transform(wav)  # (1, n_mels, T_frames)
-        mel = self._db_transform(mel)   # (1, n_mels, T_frames)
-        mel = mel.squeeze(0)            # (n_mels, T_frames)
+        T = mel.size(1)
+        target_T = self.target_num_frames
 
-        # Time dimension is last (T_frames)
-        n_mels, T = mel.shape
-
-        # Crop or pad along time to target_num_frames
-        if T > self.target_num_frames:
-            mel = mel[:, : self.target_num_frames]
-        elif T < self.target_num_frames:
-            pad_T = self.target_num_frames - T
-            mel = F.pad(mel, (0, pad_T), mode="constant", value=0.0)
-
-        if self.normalize:
-            mean = mel.mean()
-            std = mel.std(unbiased=False)
-            if std > 0:
-                mel = (mel - mean) / std
-
-        return mel  # (n_mels, target_num_frames)
-
-    # ------------------------------------------------------------------
-    # Public “single-clip” APIs (backwards compatible)
-    # ------------------------------------------------------------------
-    def process_audio_file(self, path: str) -> Tensor:
-        """
-        Legacy single-clip API: produce ONE log-mel clip for the whole audio.
-        """
-        wav, sr = self._load_audio_file(path)
-        wav = self._standardize_waveform(wav, sr)
-        mel = self._waveform_to_logmel(wav)
+        if T == target_T:
+            return mel
+        if T > target_T:
+            start = (T - target_T) // 2
+            mel = mel[:, start : start + target_T]
+        else:
+            pad_T = target_T - T
+            pad = torch.zeros(self.n_mels, pad_T, dtype=mel.dtype)
+            mel = torch.cat([mel, pad], dim=1)
         return mel
 
-    def __call__(self, path: str) -> Tensor:
-        return self.process_audio_file(path)
+    def process_audio_file(self, path: Union[str, Path]) -> Tensor:
+        wav, sr = self._load_audio_file(path)
+        wav = self._standardize_waveform(wav, sr)
+        return self._waveform_to_logmel(wav)
 
-    # ------------------------------------------------------------------
-    # [NEW - temporal clipping] Word-timestamp driven segmentation
-    # ------------------------------------------------------------------
-    @staticmethod
-    def build_segments_from_word_times(
-        word_times: Sequence[Sequence[float]],
-        target_clip_duration: float,
-        min_factor: float = 0.5,
-        max_factor: float = 1.5,
-    ) -> List[Tuple[float, float]]:
-        """
-        Construct temporal segments by grouping consecutive words so that
-        each segment duration is approx. the Mel clip duration.
-
-        Parameters
-        ----------
-        word_times:
-            Sequence like [[start_0, end_0], [start_1, end_1], ...].
-            These correspond to word-level timestamps already present
-            in your dataset.
-
-        target_clip_duration:
-            Desired segment duration in seconds, derived from the audio
-            preprocessing hyperparameters (≈ 0.96 s in NPVForensics).
-
-        min_factor, max_factor:
-            Segment durations are kept within:
-                [min_factor * target_clip_duration,
-                 max_factor * target_clip_duration]
-
-        Returns
-        -------
-        segments:
-            List of (seg_start_sec, seg_end_sec).
-        """
-        if not word_times:
-            return []
-
-        # Ensure proper ordering
-        word_times_sorted = sorted(word_times, key=lambda x: x[0])
-
-        min_dur = min_factor * target_clip_duration
-        max_dur = max_factor * target_clip_duration
-
-        segments: List[Tuple[float, float]] = []
-        i = 0
-        n = len(word_times_sorted)
-
-        while i < n:
-            seg_start = float(word_times_sorted[i][0])
-            seg_end = float(word_times_sorted[i][1])
-            j = i + 1
-
-            # Grow the segment by adding consecutive words until:
-            #   - we are close to target_clip_duration, or
-            #   - we hit max_dur, or
-            #   - we run out of words.
-            while j < n:
-                candidate_end = float(word_times_sorted[j][1])
-                candidate_dur = candidate_end - seg_start
-
-                if candidate_dur > max_dur:
-                    break
-
-                seg_end = candidate_end
-                j += 1
-
-                # If we are at or beyond the target duration, we are happy
-                if seg_end - seg_start >= target_clip_duration:
-                    break
-
-            seg_dur = seg_end - seg_start
-
-            # If the resulting segment is still very short, we can either:
-            #   - merge it with the next (if exists), or
-            #   - keep it as is for edge cases.
-            if seg_dur < min_dur and j < n:
-                # Try merging one more word if possible
-                candidate_end = float(word_times_sorted[j][1])
-                candidate_dur = candidate_end - seg_start
-                if candidate_dur <= max_dur:
-                    seg_end = candidate_end
-                    j += 1
-                    seg_dur = seg_end - seg_start
-
-            # Guard against degenerate segments
-            if seg_end > seg_start:
-                segments.append((seg_start, seg_end))
-
-            i = max(j, i + 1)
-
-        return segments
-
-    def _slice_waveform_by_segments(
+    def slice_waveform_with_segments(
         self,
         wav: Tensor,
-        sr: int,
-        segments: Sequence[Tuple[float, float]],
+        segments_sec: Sequence[Tuple[float, float]],
     ) -> List[Tensor]:
-        """
-        Slice a mono waveform (1, T) into a list of segments using
-        absolute time boundaries in seconds.
-        """
-        if wav.ndim != 2 or wav.size(0) != 1:
-            raise ValueError(
-                f"Expected mono waveform of shape (1, T), got {tuple(wav.shape)}"
-            )
-
-        T = wav.size(1)
         clips: List[Tensor] = []
-
-        for (start_sec, end_sec) in segments:
-            start_sample = int(round(start_sec * sr))
-            end_sample = int(round(end_sec * sr))
-            start_sample = max(0, min(start_sample, T - 1))
-            end_sample = max(start_sample + 1, min(end_sample, T))
-
-            clip = wav[:, start_sample:end_sample]  # (1, T_seg)
+        for start_sec, end_sec in segments_sec:
+            start_idx = int(start_sec * self.target_sr)
+            end_idx = int(end_sec * self.target_sr)
+            start_idx = max(start_idx, 0)
+            end_idx = min(end_idx, wav.size(0))
+            if end_idx <= start_idx:
+                continue
+            clip = wav[start_idx:end_idx]
+            if self.normalize_utterance:
+                peak = clip.abs().max()
+                if peak > 0:
+                    clip = clip / peak
             clips.append(clip)
-
         return clips
 
     def process_file_with_word_segments(
         self,
-        path: str,
+        path: Union[str, Path],
         word_times: Sequence[Sequence[float]],
+        target_clip_duration: float,
         min_factor: float = 0.5,
         max_factor: float = 1.5,
         return_segments: bool = False,
-    ) -> Tuple[Tensor, Optional[List[Tuple[float, float]]]]:
-        """
-        NEW NPV-style multi-clip API:
+    ):
+        wav, sr = self._load_audio_file(path)
+        wav = self._standardize_waveform(wav, sr)
 
-        Given:
-            - an audio file path
-            - a list of word timestamps [[s0, e0], [s1, e1], ...] in seconds
-
-        1) Build VA-consistent temporal segments using word grouping
-           that respects the paper's Mel clip duration.
-        2) Slice the waveform by these segments.
-        3) Convert each slice to a (n_mels, target_num_frames) log-mel clip.
-
-        Returns
-        -------
-        mel_clips:
-            Tensor of shape (N_segments, n_mels, target_num_frames)
-
-        segments (optional, if return_segments=True):
-            List of (start_sec, end_sec) used for alignment with frames.
-        """
-        # 1) Build temporal segments (Option B, time-aware)
-        target_clip_dur = self.clip_duration_seconds
-        segments = self.build_segments_from_word_times(
+        segments_sec = build_segments_from_word_times(
             word_times=word_times,
-            target_clip_duration=target_clip_dur,
+            target_clip_duration=target_clip_duration,
             min_factor=min_factor,
             max_factor=max_factor,
         )
 
-        # Fallback: if no segments could be built, use the full utterance
-        if not segments:
-            wav, sr = self._load_audio_file(path)
-            wav = self._standardize_waveform(wav, sr)
-            mel = self._waveform_to_logmel(wav)
-            mel = mel.unsqueeze(0)  # (1, n_mels, target_num_frames)
-            return (mel, None if not return_segments else [(0.0, float(wav.size(1) / sr))])
+        if not segments_sec:
+            mel_stack = torch.empty(0, self.n_mels, self.target_num_frames)
+            return (mel_stack, []) if return_segments else mel_stack
 
-        # 2) Load waveform once, standardize
-        wav, sr = self._load_audio_file(path)
-        wav = self._standardize_waveform(wav, sr)
+        clips = self.slice_waveform_with_segments(wav, segments_sec)
+        mel_list: List[Tensor] = [self._waveform_to_logmel(clip) for clip in clips]
 
-        # 3) Slice into segments and compute log-mel per slice
-        wav_clips = self._slice_waveform_by_segments(wav, self.target_sr, segments)
-        mel_clips: List[Tensor] = []
-        for clip_wav in wav_clips:
-            mel = self._waveform_to_logmel(clip_wav)
-            mel_clips.append(mel)
+        mel_stack = torch.stack(mel_list, dim=0) if mel_list else torch.empty(0, self.n_mels, self.target_num_frames)
+        return (mel_stack, segments_sec) if return_segments else mel_stack
 
-        mel_stack = torch.stack(mel_clips, dim=0)  # (N_segments, n_mels, T)
+    def process_file_with_word_segments_segmentlocal(
+        self,
+        path: Union[str, Path],
+        word_times: Sequence[Sequence[float]],
+        min_factor: float = 0.5,
+        max_factor: float = 1.5,
+    ) -> Tuple[List[Tensor], List[Tuple[float, float]]]:
+        if not word_times:
+            return [], []
 
-        return mel_stack, (segments if return_segments else None)
+        target_clip_duration = (self.cfg.target_num_frames * self.cfg.hop_length / self.cfg.target_sr)
+
+        mel_stack, segments = self.process_file_with_word_segments(
+            path=path,
+            word_times=word_times,
+            target_clip_duration=target_clip_duration,
+            min_factor=min_factor,
+            max_factor=max_factor,
+            return_segments=True,
+        )
+
+        mel_segments: List[Tensor] = [mel_stack[i] for i in range(mel_stack.shape[0])]
+        return mel_segments, segments
+
+    def process_and_save_from_timestamps_csv_segmentlocal(
+        self,
+        audio_path: Union[str, Path],
+        word_times: Sequence[Sequence[float]],
+        out_pt_path: Union[str, Path],
+        log_csv_path: Optional[Union[str, Path]] = None,
+        min_factor: float = 0.5,
+        max_factor: float = 1.5,
+    ) -> Tuple[int, int]:
+        """
+        Offline convenience wrapper.
+
+        NOTE: Signature/name unchanged to avoid breaking callers.
+        """
+        audio_path = Path(audio_path)
+        out_pt_path = Path(out_pt_path)
+
+        num_words = len(word_times)
+
+        mel_segments, segments = self.process_file_with_word_segments_segmentlocal(
+            path=str(audio_path),
+            word_times=word_times,
+            min_factor=min_factor,
+            max_factor=max_factor,
+        )
+        num_segments = len(mel_segments)
+
+        if len(segments) != num_segments:
+            raise ValueError(f"Mismatch: mel_segments={num_segments}, segments_sec={len(segments)}")
+
+        for idx, mel in enumerate(mel_segments):
+            if not isinstance(mel, torch.Tensor):
+                raise TypeError(f"mel_segments[{idx}] is not a Tensor (got {type(mel)})")
+            if mel.ndim != 2:
+                raise ValueError(f"Expected mel_segments[{idx}] shape (n_mels, T), got {tuple(mel.shape)}")
+            if mel.shape[0] != self.n_mels:
+                raise ValueError(f"mel_segments[{idx}].shape[0]={mel.shape[0]} expected {self.n_mels}")
+            if mel.dtype != torch.float32:
+                mel_segments[idx] = mel.float()
+
+        out_pt_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # ==================================================================
+        # [MODIFIED] Save ONLY the 3 requested keys (and nothing else)
+        #           - audio_file
+        #           - mel_segments
+        #           - segments_sec
+        # ==================================================================
+        save_payload = {
+            "audio_file": audio_path.name,
+            "mel_segments": mel_segments,
+            "segments_sec": segments,
+        }
+        torch.save(save_payload, out_pt_path)
+
+        # NOTE: logging behavior unchanged; just logs minimal info.
+        if log_csv_path is not None:
+            log_csv_path = Path(log_csv_path)
+            log_csv_path.parent.mkdir(parents=True, exist_ok=True)
+            file_exists = log_csv_path.exists()
+
+            pt_rel_path = _to_rel_data_path(out_pt_path)
+            with log_csv_path.open("a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                if not file_exists:
+                    writer.writerow(["audio_file", "pt_rel_path", "num_words", "num_segments"])
+                writer.writerow([audio_path.name, pt_rel_path, num_words, num_segments])
+
+        return num_segments, num_words

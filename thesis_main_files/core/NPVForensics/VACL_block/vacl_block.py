@@ -25,8 +25,16 @@ class VACLVA(nn.Module):
 
     Shape conventions (PyTorch):
     -----------------------------
-    X_v : (B, d_v, S)
-    X_a : (B, d_a, S)
+    This block computes over the sequence axis `S` and expects inputs in
+    channel-first format:
+
+        X_v : (B, d_v, S)
+        X_a : (B, d_a, S)
+
+    Variable-length sequences:
+    -----------------------------
+    Supports any runtime `S <= seq_len` by slicing W_ma/W_mv to S.
+    If `S > seq_len`, raises a clear error.
 
     J_va  : (B, d_joint, S) with d_joint = d_v + d_a
     M_v   : (B, S, S)
@@ -44,15 +52,6 @@ class VACLVA(nn.Module):
         k: int,
         mu: float = 0.5,
     ):
-        """
-        Args
-        ----
-        d_v     : feature dimension of V (viseme / face)
-        d_a     : feature dimension of A (audio)
-        seq_len : S, sequence length
-        k       : hidden size of attention maps H_v, H_a
-        mu      : μ in Eq. (15)
-        """
         super().__init__()
         self.d_v = d_v
         self.d_a = d_a
@@ -61,21 +60,17 @@ class VACLVA(nn.Module):
         self.k = k
         self.mu = mu
 
-        # Eq. (9)–(10): W_jv ∈ R^{d_v × d_joint}, W_ja ∈ R^{d_a × d_joint}
+        # Eq. (9)–(10)
         self.W_jv = nn.Parameter(torch.Tensor(d_v, self.d_joint))
         self.W_ja = nn.Parameter(torch.Tensor(d_a, self.d_joint))
 
-        # Eq. (11)–(12):
-        #   W_a  ∈ R^{k × d_a}, W_v  ∈ R^{k × d_v}
-        #   W_ma ∈ R^{k × S},   W_mv ∈ R^{k × S}
+        # Eq. (11)–(12)
         self.W_a = nn.Parameter(torch.Tensor(k, d_a))
         self.W_v = nn.Parameter(torch.Tensor(k, d_v))
-
         self.W_ma = nn.Parameter(torch.Tensor(k, seq_len))
         self.W_mv = nn.Parameter(torch.Tensor(k, seq_len))
 
-        # Eq. (13):
-        #   W_hv ∈ R^{d_v × k}, W_ha ∈ R^{d_a × k}
+        # Eq. (13)
         self.W_hv = nn.Parameter(torch.Tensor(d_v, k))
         self.W_ha = nn.Parameter(torch.Tensor(d_a, k))
 
@@ -95,9 +90,6 @@ class VACLVA(nn.Module):
         X_a: torch.Tensor,
     ):
         """
-        X_v : (B, d_v, S)
-        X_a : (B, d_a, S)
-
         Returns:
           J_va : (B, d_joint, S)
           M_v  : (B, S, S)
@@ -105,18 +97,21 @@ class VACLVA(nn.Module):
         """
         B, d_v, S = X_v.shape
         _, d_a, S_a = X_a.shape
-        assert d_a == self.d_a and S_a == S
 
-        # J_va is concatenation along feature dimension
-        J_va = torch.cat([X_v, X_a], dim=1)  # (B, d_v + d_a, S)
+        if d_v != self.d_v:
+            raise ValueError(f"X_v has d_v={d_v}, expected {self.d_v}.")
+        if d_a != self.d_a:
+            raise ValueError(f"X_a has d_a={d_a}, expected {self.d_a}.")
+        if S_a != S:
+            raise ValueError(f"Seq mismatch: X_v S={S}, X_a S={S_a}.")
 
-        # Eq. (9): M_v
+        J_va = torch.cat([X_v, X_a], dim=1)  # (B, d_joint, S)
+
         Xv_T = X_v.transpose(1, 2)              # (B, S, d_v)
         mid_v = torch.matmul(Xv_T, self.W_jv)   # (B, S, d_joint)
         M_v = torch.bmm(mid_v, J_va) / math.sqrt(self.d_joint)
         M_v = torch.tanh(M_v)                   # (B, S, S)
 
-        # Eq. (10): M_a
         Xa_T = X_a.transpose(1, 2)              # (B, S, d_a)
         mid_a = torch.matmul(Xa_T, self.W_ja)   # (B, S, d_joint)
         M_a = torch.bmm(mid_a, J_va) / math.sqrt(self.d_joint)
@@ -137,16 +132,23 @@ class VACLVA(nn.Module):
           H_v : (B, k, S)
           H_a : (B, k, S)
         """
-        # Eq. (11) for A
+        B, _, S = X_v.shape
+
+        if S > self.seq_len:
+            raise ValueError(
+                f"Received S={S} but initialised with seq_len={self.seq_len}. "
+                f"Increase seq_len or crop/pad inputs to <= seq_len."
+            )
+
+        W_ma = self.W_ma[:, :S]  # (k, S)
+        W_mv = self.W_mv[:, :S]  # (k, S)
+
         term_a_feat = torch.einsum("kd,bds->bks", self.W_a, X_a)
-        term_a_corr = torch.einsum("ks,bss->bks", self.W_ma,
-                                   M_a.transpose(-1, -2))
+        term_a_corr = torch.einsum("ks,bss->bks", W_ma, M_a.transpose(-1, -2))
         H_a = F.relu(term_a_feat + term_a_corr)
 
-        # Eq. (12) for V
         term_v_feat = torch.einsum("kd,bds->bks", self.W_v, X_v)
-        term_v_corr = torch.einsum("ks,bss->bks", self.W_mv,
-                                   M_v.transpose(-1, -2))
+        term_v_corr = torch.einsum("ks,bss->bks", W_mv, M_v.transpose(-1, -2))
         H_v = F.relu(term_v_feat + term_v_corr)
 
         return H_v, H_a
@@ -178,7 +180,11 @@ class VACLVA(nn.Module):
     def _correlation_matrix(self, X: torch.Tensor) -> torch.Tensor:
         """
         X : (B, D, S) -> C ∈ R^{D×D} with entries in [-1, 1].
+
+        NOTE: fp32 upcast for numerically sensitive ops (stability only).
         """
+        X = X.float()
+
         B, D, S = X.shape
         N = B * S
         Z = X.permute(0, 2, 1).reshape(N, D)  # (N, D)
@@ -202,34 +208,47 @@ class VACLVA(nn.Module):
         self,
         X_v: torch.Tensor,
         X_a: torch.Tensor,
+        *,
+        return_intermediates: bool = True,
     ) -> Dict[str, torch.Tensor]:
         """
-        Returns dict with:
-          X_va      : fused VA feature (Eq. 14)
-          L_cor     : VA correlation loss (Eq. 15 & 16)
+        Returns:
+          X_va      : Eq. (14)
+          L_cor     : Eq. (15–16)
           Loss_va   : same as L_cor
-          plus intermediates (J_va, M_v, M_a, H_v, H_a, X_v_att, X_a_att)
+
+        If return_intermediates=True, also returns:
+          J_va, M_v, M_a, H_v, H_a, X_v_att, X_a_att
         """
+        # [DDP / LIGHTNING NOTE]
+        # - No device moves inside forward.
+        # - Returning dict of tensors is autograd-safe.
+        # - You may disable intermediates to reduce overhead.
+
         J_va, M_v, M_a = self._compute_joint_matrices(X_v, X_a)
         H_v, H_a = self._compute_attention_maps(X_v, X_a, M_v, M_a)
-        X_v_att, X_a_att, X_va = self._compute_attention_features(
-            X_v, X_a, H_v, H_a
-        )
+        X_v_att, X_a_att, X_va = self._compute_attention_features(X_v, X_a, H_v, H_a)
 
         Loss_va = self._correlation_loss_single(X_va)
-        L_cor = Loss_va  # Eq. (16) with only VA branch
+        L_cor = Loss_va  # Eq. (16)
 
-        return {
+        out: Dict[str, torch.Tensor] = {
             "X_va": X_va,
             "L_cor": L_cor,
             "Loss_va": Loss_va,
-            "J_va": J_va,
-            "M_v": M_v,
-            "M_a": M_a,
-            "H_v": H_v,
-            "H_a": H_a,
-            "X_v_att": X_v_att,
-            "X_a_att": X_a_att,
         }
 
+        if return_intermediates:
+            out.update(
+                {
+                    "J_va": J_va,
+                    "M_v": M_v,
+                    "M_a": M_a,
+                    "H_v": H_v,
+                    "H_a": H_a,
+                    "X_v_att": X_v_att,
+                    "X_a_att": X_a_att,
+                }
+            )
 
+        return out

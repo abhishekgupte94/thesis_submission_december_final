@@ -1,50 +1,41 @@
-import math
-from typing import Dict
+from typing import Dict, Union
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from core.NPVForensics.VACL_block.vacl_block import VACLVA
 
+# ----------------------------------------------------------------------
+# [DDP / LIGHTNING FRIENDLY IMPORT]
+# ----------------------------------------------------------------------
+# Avoid hard-coded single import path so this works on:
+#   - Mac sanity scripts
+#   - A100 training box
+#   - different repo roots
+# ----------------------------------------------------------------------
+try:
+    from core.NPVForensics.VACL_block.vacl_block import VACLVA  # type: ignore
+except Exception:  # pragma: no cover
+    from vacl_block import VACLVA
 
-# ======================================================================
-# [NEW] VACL projection-head wrapper for integration as ModuleB / ModuleC
-# ======================================================================
 
 class VACLProjectionHead(nn.Module):
     """
-    Wrapper around VACLVA that makes it behave like a projection head
-    suitable for use as a sub-architecture in a larger model (e.g. ModuleB
-    or ModuleC inside RandomlyNamedSA).
+    Projection-head wrapper around VACLVA (sub-architecture).
 
-    Responsibilities
-    ----------------
-    1. Accept modality-specific features for V and A.
-    2. Run the VACLVA block to obtain fused sequence features X_va and the
-       VA correlation loss.
-    3. Pool X_va over time to get a per-video / per-sample embedding.
-    4. Project that embedding to an output dimension expected by the main
-       architecture (e.g. d_b).
+    Responsibilities:
+      1) Accept V/A features from upstream (post-SWIN).
+      2) Convert layout to (B, D, S) for VACLVA.
+      3) Run VACLVA (Eq. 9–16 unchanged).
+      4) Pool X_va over S to get a per-sample vector.
+      5) Linear projection to out_dim.
 
-    Intended usage
-    --------------
-    - Input features may be in either:
-        * "bsd": (B, S, D)  [time-major, common in transformer stacks]
-        * "bds": (B, D, S)  [channel-first, what VACLVA expects]
-      You specify this via `input_layout`.
+    input_layout supported:
+      - "bsd": (B, S, D)
+      - "bds": (B, D, S)
+      - "sd" : (S, D)   (unbatched)
+      - "ds" : (D, S)   (unbatched)
 
-    - The forward method returns a dict so that the main LightningModule
-      can:
-        * use `out["proj"]` as the projection output to feed into
-          downstream modules (e.g. ModuleC).
-        * add `lambda_cor * out["L_cor"]` as an auxiliary loss term.
-
-    Shapes
-    ------
-    X_v_in : (B, S, d_v) or (B, d_v, S) depending on `input_layout`
-    X_a_in : (B, S, d_a) or (B, d_a, S)
-
-    proj   : (B, out_dim)               # pooled + projected embedding
+    pool:
+      - "mean", "max", "cls"
     """
 
     def __init__(
@@ -57,113 +48,97 @@ class VACLProjectionHead(nn.Module):
         mu: float = 0.5,
         input_layout: str = "bsd",
         pool: str = "mean",
+        force_fp32_inputs: bool = True,
+        return_intermediates: bool = False,
     ):
-        """
-        Args
-        ----
-        d_v, d_a  : feature dims for V and A features.
-        seq_len   : S, maximum sequence length.
-        k         : hidden dimension used inside VACLVA.
-        out_dim   : output dimension of the projection head (e.g. d_b).
-        mu        : μ term for correlation loss in VACLVA.
-        input_layout:
-            "bsd" -> expect (B, S, D) and internally transpose to (B, D, S).
-            "bds" -> expect (B, D, S) and pass directly to VACLVA.
-        pool:
-            "mean" -> temporal mean over S
-            "max"  -> temporal max over S
-            "cls"  -> take X_va[:,:,0] as sequence summary
-        """
         super().__init__()
-        assert input_layout in ("bsd", "bds"), \
-            f"Unsupported input_layout={input_layout}"
-        assert pool in ("mean", "max", "cls"), \
-            f"Unsupported pool={pool}"
+        assert input_layout in ("bsd", "bds", "sd", "ds"), f"Unsupported input_layout={input_layout}"
+        assert pool in ("mean", "max", "cls"), f"Unsupported pool={pool}"
 
+        # [CONFIG]
         self.input_layout = input_layout
         self.pool = pool
+        # No-AMP friendly: cast incoming features to fp32 before VACL math.
+        self.force_fp32_inputs = bool(force_fp32_inputs)
+        # DDP efficiency: intermediates include large SxS maps; keep off by default.
+        self.return_intermediates = bool(return_intermediates)
 
-        # Core VACL block (unchanged)
-        self.vacl = VACLVA(
-            d_v=d_v,
-            d_a=d_a,
-            seq_len=seq_len,
-            k=k,
-            mu=mu,
-        )
+        # Core VACL block (Eq. 9–16 unchanged)
+        self.vacl = VACLVA(d_v=d_v, d_a=d_a, seq_len=seq_len, k=k, mu=mu)
 
-        # Simple linear projection from concatenated (V,A) feature dim
-        # (d_v + d_a) → out_dim
+        # Projection head: (d_v + d_a) -> out_dim
         self.proj = nn.Linear(d_v + d_a, out_dim)
 
     def _to_bds(self, X: torch.Tensor) -> torch.Tensor:
         """
-        Convert input to (B, D, S) layout expected by VACLVA if needed.
+        Convert input to (B, D, S) for VACLVA.
         """
         if self.input_layout == "bds":
-            return X
-        # "bsd": (B, S, D) -> (B, D, S)
-        return X.transpose(1, 2)
+            if X.dim() != 3:
+                raise ValueError(f"Expected (B, D, S) for 'bds', got {tuple(X.shape)}")
+            return X.contiguous()
+
+        if self.input_layout == "bsd":
+            if X.dim() != 3:
+                raise ValueError(f"Expected (B, S, D) for 'bsd', got {tuple(X.shape)}")
+            return X.transpose(1, 2).contiguous()
+
+        if self.input_layout == "sd":
+            if X.dim() != 2:
+                raise ValueError(f"Expected (S, D) for 'sd', got {tuple(X.shape)}")
+            return X.transpose(0, 1).unsqueeze(0).contiguous()  # (1, D, S)
+
+        if self.input_layout == "ds":
+            if X.dim() != 2:
+                raise ValueError(f"Expected (D, S) for 'ds', got {tuple(X.shape)}")
+            return X.unsqueeze(0).contiguous()  # (1, D, S)
+
+        raise ValueError(f"Unsupported input_layout={self.input_layout}")
 
     def _pool_temporal(self, X_va: torch.Tensor) -> torch.Tensor:
         """
-        X_va : (B, D, S) -> (B, D) by temporal pooling.
+        X_va : (B, D, S) -> (B, D)
         """
         if self.pool == "mean":
             return X_va.mean(dim=-1)
         if self.pool == "max":
             return X_va.max(dim=-1).values
-        # "cls" token: first time-step
-        return X_va[..., 0]
+        return X_va[..., 0]  # "cls"
 
     def forward(
         self,
         X_v: torch.Tensor,
         X_a: torch.Tensor,
         return_dict: bool = True,
-    ) -> Dict[str, torch.Tensor] | torch.Tensor:
+    ) -> Union[Dict[str, torch.Tensor], torch.Tensor]:
         """
-        Forward pass through VACL + projection head.
-
-        Args
-        ----
-        X_v, X_a : input features for V and A.
-                   Shape depends on `input_layout`.
-
-        return_dict:
-            - If True:  return a dict with projection + all VACL outputs.
-            - If False: return only the projected embedding (B, out_dim).
-
-        Returns
-        -------
-        When return_dict=True:
-            {
-              "proj"    : (B, out_dim),    # main projection head output
-              "z"       : (B, d_v + d_a),  # pooled X_va before projection
-              "X_va"    : (B, d_v + d_a, S),
-              "L_cor"   : scalar correlation loss,
-              "Loss_va" : same as L_cor,
-              ...       # all other keys from VACLVA
-            }
-
-        When return_dict=False:
-            proj : (B, out_dim)
+        Returns:
+          - if return_dict: dict containing proj + L_cor (+ optional intermediates)
+          - else: proj only
         """
-        # Ensure layout is (B, D, S) for the VACL block
         X_v_bds = self._to_bds(X_v)
         X_a_bds = self._to_bds(X_a)
 
-        vacl_out = self.vacl(X_v_bds, X_a_bds)  # core VACL run
-        X_va = vacl_out["X_va"]                 # (B, d_v + d_a, S)
+        if self.force_fp32_inputs:
+            if X_v_bds.dtype != torch.float32:
+                X_v_bds = X_v_bds.float()
+            if X_a_bds.dtype != torch.float32:
+                X_a_bds = X_a_bds.float()
 
-        # Temporal pooling + projection
-        z = self._pool_temporal(X_va)           # (B, d_v + d_a)
-        proj = self.proj(z)                     # (B, out_dim)
+        vacl_out = self.vacl(
+            X_v_bds,
+            X_a_bds,
+            return_intermediates=self.return_intermediates,
+        )
+
+        X_va = vacl_out["X_va"]  # (B, d_v + d_a, S)
+
+        z = self._pool_temporal(X_va)  # (B, d_v + d_a)
+        proj = self.proj(z)            # (B, out_dim)
 
         if not return_dict:
             return proj
 
-        # Merge everything into a single dict for the main architecture
         out = dict(vacl_out)
         out["z"] = z
         out["proj"] = proj
