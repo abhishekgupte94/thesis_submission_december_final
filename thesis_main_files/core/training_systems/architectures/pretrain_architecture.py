@@ -5,8 +5,8 @@ AV pretraining architecture
 
 This module defines the high-level AVPretrainArchitecture that wraps:
     - A feature extractor backbone (e.g. Swin)
-    - A positional embedding/tokenisation stage
     - Module A: VACL-based head
+    - Module A.1: a pre-VACL tokoeinizer stage (will be added later)
     - Module B: common space / EC (CPE) head
 
 NOTE: Sections marked with "KEEP YOUR ORIGINAL IMPLEMENTATION HERE"
@@ -19,7 +19,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass  # [ADDED]
 from typing import Any, Dict, Optional
-
 import torch
 from torch import nn, Tensor
 
@@ -49,6 +48,12 @@ class ArchitectureConfig:  # [ADDED]
 
     Fields
     ------
+    audio inputs needed for the Swin2d - (Bxn_melxT)
+    video inputs needed for the Swin3d - (Bx3xCxHxW)
+    ---> to be loaded from saved .pt files where the video file is saved in a pickle handling and the key within points
+        data paths of the vdideo files
+       ---> to be loaded from saved .pt files where the audio file is directly saved as the log mel spec in a .pt format
+       in a specified audio dir
     vacl_weight:
         Optional weighting for the VACL loss (if you decide to use it
         inside the architecture at some point; currently NOT used here).
@@ -108,8 +113,9 @@ class AVPretrainArchitecture(nn.Module):
         super().__init__()
 
         # Core submodules (unchanged)
-        self.av_wrapper = av_wrapper
-        self.swin_backbone = swin_backbone
+        self.swin_backbone_audio = swin_backbone_2d
+        self.swin_backbone_video = swin_backbone_3d
+        self.token_unifer = token_unifer
         self.module_a = module_a
         self.module_b = module_b
 
@@ -136,23 +142,16 @@ class AVPretrainArchitecture(nn.Module):
         """
         High-level forward:
 
-        1) Use `av_wrapper` to transform the batch dict into tensors
-           suitable for the Swin backbone (e.g. token sequences).
-        2) Run them through `swin_backbone` (feature extractor).
-        3) Feed the results into module A (VACL head) and module B
+        1) Run audio/video through respective `swin_backbone` (feature extractor).
+        3) Feed the swin backbones outputs into the tokenunifer
+        2) Feed the results into module A (VACL head) and module B
            (common-space / EC head).
-        4) Return the full dict of features + head outputs.
+        3) Return the full dict of features + head outputs.
 
         NOTE:
         -----
         This method should already exist in your original script.
-        The only requirement for multi-GPU + Lightning safety is:
-
-            - No `.cuda()` or `.to(device)` hard-coded to 'cuda:0'
-            - No optimizer / logging / print-side training logic here
-
-        Replace the `...` block with your existing implementation
-        unchanged.
+        This scirpt has to be friendly with the DDP/pytorch lightning
         """
 
         # ------------------------------------------------------------------

@@ -20,7 +20,7 @@ from typing import Any, Dict, Optional
 
 import torch
 from torch import nn
-import pytorch_lightning as pl
+import lightning
 
 from core.training_systems.architectures.pretrain_architecture import AVPretrainArchitecture, ArchitectureConfig
 

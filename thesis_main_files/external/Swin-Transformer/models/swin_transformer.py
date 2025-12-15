@@ -595,9 +595,11 @@ class SwinTransformer(nn.Module):
             x = layer(x)
 
         x = self.norm(x)  # B L C
+        tokens = x
         x = self.avgpool(x.transpose(1, 2))  # B C 1
         x = torch.flatten(x, 1)
-        return x
+        x = None
+        return tokens
 
     def forward(self, x):
         x = self.forward_features(x)
