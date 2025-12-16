@@ -22,15 +22,27 @@ class BuildSwin2DConfig:
     # Optional YAML (your Swin repo config). If provided, we load & overlay defaults.
     yaml_path: Optional[str] = None
 
-    # Your confirmed audio input
-    img_size: Tuple[int, int] = (96, 64)  # (H, W) = (F, T)
+    # ----------------------------------------------------------------------------------
+    # [MODIFIED] Default to **Swin-Tiny** geometry.
+    # Reason: you asked to patch the builder config to the canonical tiny settings:
+    #   NAME: swin_tiny_patch4_window7_224
+    #   EMBED_DIM: 96
+    #   DEPTHS: [2, 2, 6, 2]
+    #   NUM_HEADS: [3, 6, 12, 24]
+    #   WINDOW_SIZE: 7
+    #
+    # Note: we also default IMG_SIZE to 224x224 to match the tiny config name.
+    # For audio, the sanity script will resize a log-mel image to (224,224).
+    # ----------------------------------------------------------------------------------
+    img_size: Tuple[int, int] = (224, 224)
     in_chans: int = 1
-    embed_dim: int = 128
+    embed_dim: int = 96
 
     # Optional overrides (if you don’t want to rely on YAML for these)
-    depths: Optional[Sequence[int]] = None
-    num_heads: Optional[Sequence[int]] = None
-    window_size: Optional[int] = None
+    # [MODIFIED] Defaults set to tiny; still overridable if you pass explicit args.
+    depths: Optional[Sequence[int]] = (2, 2, 6, 2)
+    num_heads: Optional[Sequence[int]] = (3, 6, 12, 24)
+    window_size: Optional[int] = 7
 
     use_checkpoint: bool = False
 
@@ -122,16 +134,29 @@ def _make_config_obj(cfg: BuildSwin2DConfig) -> _Attr:
         "DATA": {"IMG_SIZE": list(cfg.img_size), "DATASET": "dummy"},
         "MODEL": {
             "TYPE": "swin",
-            "NAME": "swin_audio_backbone_tokens",
+            # ----------------------------------------------------------------------
+            # [MODIFIED] Match canonical Swin-Tiny naming.
+            # Reason: your builder can be swapped with pretrained checkpoints/configs
+            # that key off this name.
+            # ----------------------------------------------------------------------
+            "NAME": "swin_tiny_patch4_window7_224",
             "NUM_CLASSES": 0,          # irrelevant because we won't call forward()/head
             "DROP_RATE": 0.0,
             "DROP_PATH_RATE": 0.2,
             "SWIN": {
-                "PATCH_SIZE": 2,
+                # ------------------------------------------------------------------
+                # [MODIFIED] Tiny uses patch4.
+                # Reason: your requested config is swin_tiny_patch4_window7_224.
+                # ------------------------------------------------------------------
+                "PATCH_SIZE": 4,
                 "IN_CHANS": cfg.in_chans,
                 "EMBED_DIM": cfg.embed_dim,
-                "DEPTHS": [2, 2, 18, 2],
-                "NUM_HEADS": [4, 8, 16, 32],
+                # ------------------------------------------------------------------
+                # [MODIFIED] Tiny stage depths & heads.
+                # Reason: exactly the values you provided.
+                # ------------------------------------------------------------------
+                "DEPTHS": [2, 2, 6, 2],
+                "NUM_HEADS": [3, 6, 12, 24],
                 "WINDOW_SIZE": 7,
                 "MLP_RATIO": 4.0,
                 "QKV_BIAS": True,

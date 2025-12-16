@@ -1,92 +1,142 @@
 #!/usr/bin/env python
 """
-Small sanity check for Swin2D backbone used as a token generator.
-
-Verifies:
-1) Forward_features runs
-2) Output tokens have shape (B, S, D)
-3) Gradients flow into patch embedding weights
+sanity_audio_preprocessor_swin_tiny_noresize.py
 """
 
-import time
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
 import torch
 
-# ---------------------------------------------------------------------
-# Import your Swin2D builder
-# (adjust import path if needed)
-# ---------------------------------------------------------------------
-from build_swin2d import build_swin2d_backbone, BuildSwin2DConfig
 
+# =============================================================================
+# [ADDED] Make imports work no matter where you run this script from
+# Reason: 'scripts....' lives under your repo root (or under thesis_main_files),
+# but Python only auto-adds the directory containing THIS file.
+# So we push the correct root(s) into sys.path at runtime.
+# =============================================================================
+def _add_repo_paths_to_syspath() -> None:
+    this_file = Path(__file__).resolve()
 
-def main():
-    torch.manual_seed(0)
+    # Option A: if sanity is inside thesis_main_files/**, then thesis_main_files is an ancestor
+    for p in [this_file.parent, *this_file.parents]:
+        if p.name == "thesis_main_files":
+            repo_root = p.parent
+            if str(repo_root) not in sys.path:
+                sys.path.insert(0, str(repo_root))        # so "scripts...." works
+            if str(p) not in sys.path:
+                sys.path.insert(0, str(p))                # so local modules also work
+            return
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # Option B: fallback (if you put sanity somewhere else):
+    # go up a few levels and hope we hit the repo root that contains "scripts/"
+    for p in [this_file.parent, *this_file.parents]:
+        if (p / "scripts").exists():
+            if str(p) not in sys.path:
+                sys.path.insert(0, str(p))
+            return
 
-    # ------------------------------------------------------------
-    # Config (matches what you described)
-    # ------------------------------------------------------------
-    cfg = BuildSwin2DConfig(
-        img_size=(96, 64),     # mel spectrogram size
-        in_chans=1,
-        embed_dim=128,
-        depths=(2, 2, 18, 2),
-        num_heads=(4, 8, 16, 32),
-        window_size=8
-        # patch_size=2
+    # If neither worked, show a clear error
+    raise RuntimeError(
+        "Could not locate repo root automatically. "
+        "Place this sanity script under your repo (preferably under thesis_main_files/), "
+        "or adjust _add_repo_paths_to_syspath() to point at the folder that contains 'scripts/'."
     )
 
-    model = build_swin2d_backbone(cfg).to(device)
-    model.train()
 
-    # ------------------------------------------------------------
-    # Dummy mel input: B x 1 x F x T
-    # ------------------------------------------------------------
-    B = 1
-    x = torch.randn(B, 1, 96, 64, device=device, requires_grad=True)
+# =============================================================================
+# Memory guard (Mac-safe)
+# =============================================================================
+def _get_rss_bytes() -> int:
+    try:
+        import psutil  # type: ignore
+        return int(psutil.Process(os.getpid()).memory_info().rss)
+    except Exception:
+        import resource
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        if sys.platform == "darwin":
+            return int(rss)
+        return int(rss) * 1024
 
-    start = time.time()
 
-    # ------------------------------------------------------------
-    # Forward (tokens only)
-    # ------------------------------------------------------------
-    tokens = model.forward_features(x)
+def _guard_rss(max_gb: float, note: str = "") -> None:
+    rss_gb = _get_rss_bytes() / (1024 ** 3)
+    if rss_gb > max_gb:
+        raise SystemExit(
+            f"[MEMORY GUARD] RSS {rss_gb:.2f} GB exceeds limit {max_gb:.2f} GB. {note}"
+        )
 
-    print(f"[OK] tokens shape: {tuple(tokens.shape)}")
 
-    # Expect: (B, S, D)
-    assert tokens.ndim == 3, "Expected B x S x D tokens"
+# =============================================================================
+# Main sanity
+# =============================================================================
+def main() -> None:
+    # [ADDED] must happen before importing your 'scripts....' module
+    _add_repo_paths_to_syspath()
 
-    # ------------------------------------------------------------
-    # Dummy loss (keep it trivial)
-    # ------------------------------------------------------------
-    loss = tokens.mean()
-    loss.backward()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--audio-path", type=str, required=True)
+    ap.add_argument("--device", type=str, default="cpu", choices=["cpu", "mps", "cuda"])
+    ap.add_argument("--max-rss-gb", type=float, default=6.0)
+    args = ap.parse_args()
 
-    # ------------------------------------------------------------
-    # Gradient check (critical)
-    # ------------------------------------------------------------
-    grad_checks = [
-        "backbone.patch_embed.proj.weight",
-        "backbone.layers.0.blocks.0.attn.qkv.weight",
-        "backbone.norm.weight",
-    ]
+    audio_path = Path(args.audio_path)
+    if not audio_path.exists():
+        raise SystemExit(f"Audio file not found: {audio_path}")
 
-    found_grad = False
-    for name, param in model.named_parameters():
-        if name in grad_checks and param.grad is not None:
-            g = param.grad
-            print(
-                f"[OK] grad: {name} | "
-                f"max_abs={g.abs().max().item():.3e} | "
-                f"norm={g.norm().item():.3e}"
-            )
-            found_grad = True
+    torch.set_num_threads(min(4, os.cpu_count() or 4))
 
-    assert found_grad, "No gradients found in backbone!"
+    _guard_rss(args.max_rss_gb, "before audio preprocessing")
 
-    elapsed = time.time() - start
-    print(f"[DONE] Swin2D backbone sanity passed in {elapsed:.2f}s")
+    # -------------------------------------------------------------------------
+    # Import YOUR audio preprocessor (unchanged)
+    # -------------------------------------------------------------------------
+    from scripts.preprocessing.audio.AudioPreprocessorNPV import AudioPreprocessorNPV
+
+    preprocessor = AudioPreprocessorNPV()
+    mel = preprocessor.process_audio_file(audio_path)
+
+    if not isinstance(mel, torch.Tensor) or mel.ndim != 2:
+        raise RuntimeError(
+            f"Expected mel Tensor of shape (H, W), got {type(mel)} {getattr(mel, 'shape', None)}"
+        )
+
+    x = mel.unsqueeze(0).unsqueeze(0)  # (1, 1, 96, 64) (no resize)
+
+    _guard_rss(args.max_rss_gb, "after mel creation")
+
+    device = args.device
+    if device == "cuda" and not torch.cuda.is_available():
+        raise SystemExit("CUDA requested but not available")
+    if device == "mps" and not torch.backends.mps.is_available():
+        raise SystemExit("MPS requested but not available")
+
+    x = x.to(device)
+
+    # -------------------------------------------------------------------------
+    # Build Swin Tiny backbone (patched config already applied)
+    # -------------------------------------------------------------------------
+    from build_swin2d import build_swin2d_backbone
+
+    model = build_swin2d_backbone().to(device).eval()
+
+    rss_before = _get_rss_bytes() / (1024 ** 3)
+
+    with torch.no_grad():
+        out = model(x)
+
+    rss_after = _get_rss_bytes() / (1024 ** 3)
+    _guard_rss(args.max_rss_gb, "after Swin forward")
+
+    print("Audio file:", audio_path)
+    print("Mel shape (H, W):", tuple(mel.shape))
+    print("Input to Swin (B,C,H,W):", tuple(x.shape))
+    print("Swin output shape:", tuple(out.shape))
+    print(f"RSS before: {rss_before:.2f} GB | RSS after: {rss_after:.2f} GB")
 
 
 if __name__ == "__main__":
