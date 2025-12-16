@@ -1,9 +1,3 @@
-
-
-
-
-
-
 #!/usr/bin/env python
 """
 offline_export_avspeech_audio_from_video_pt.py
@@ -149,7 +143,11 @@ class OfflineAudioExporter(pl.LightningModule):
 
         clip_id = video_pt_path.name.replace("_video.pt", "")
         audio_path = self.cfg.audio_root / f"{clip_id}.wav"
-        audio_pt_path = self.cfg.audio_pt_dir / f"{clip_id}_audio.pt"
+
+        # ============================================================
+        # [PATCH] audio_pt_path is now an OUTPUT ROOT DIRECTORY
+        # ============================================================
+        audio_pt_path = self.cfg.audio_pt_dir
 
         info: Dict[str, Any] = {
             "clip_id": clip_id,
@@ -170,14 +168,18 @@ class OfflineAudioExporter(pl.LightningModule):
             info["proc_time_sec"] = time.time() - t0
             return info
 
-        if audio_pt_path.exists():
+        # ============================================================
+        # [PATCH] Skip check is now per-clip directory
+        # ============================================================
+        clip_audio_dir = self.cfg.audio_pt_dir / clip_id
+        if clip_audio_dir.exists():
             info["status"] = "skipped"
-            info["audio_pt"] = str(audio_pt_path)
+            info["audio_pt"] = str(clip_audio_dir)
             info["proc_time_sec"] = time.time() - t0
             return info
 
         # ------------------------------------------------------------------
-        # [REQ] Load segments_sec from Stage-1 video .pt
+        # Load segments_sec from Stage-1 video .pt
         # ------------------------------------------------------------------
         vp = torch.load(video_pt_path, map_location="cpu")
         segments_sec = vp.get("segments_sec", None)
@@ -189,19 +191,20 @@ class OfflineAudioExporter(pl.LightningModule):
 
         try:
             # ------------------------------------------------------------------
-            # [REQ] Call segment-driven audio export (NO segmentation logic)
+            # [PATCH] segment-driven audio export (per-segment .pt)
             # ------------------------------------------------------------------
             num_segments, _ = self.audio_prep.process_and_save_from_segments_sec_segmentlocal(
                 audio_path=audio_path,
                 segments_sec=segments_sec,
-                out_pt_path=audio_pt_path,
+                out_pt_path=audio_pt_path,     # directory
                 log_csv_path=self.audio_log_csv_rank,
+                clip_id=clip_id,               # required for naming
             )
 
             info.update(
                 dict(
                     status="ok",
-                    audio_pt=str(audio_pt_path),
+                    audio_pt=str(clip_audio_dir),
                     num_segments=int(num_segments),
                     proc_time_sec=time.time() - t0,
                 )
@@ -210,7 +213,7 @@ class OfflineAudioExporter(pl.LightningModule):
             self._append_row(
                 csv_path=self.audio_log_csv_rank,
                 header=["clip_id", "audio_file", "audio_pt", "num_segments", "rank", "proc_time_sec"],
-                row=[clip_id, audio_path.name, str(audio_pt_path), num_segments, self.rank, info["proc_time_sec"]],
+                row=[clip_id, audio_path.name, str(clip_audio_dir), num_segments, self.rank, info["proc_time_sec"]],
             )
 
             return info
@@ -244,7 +247,6 @@ class OfflineAudioExporter(pl.LightningModule):
                     with p.open("r", encoding="utf-8") as f:
                         merged.update(json.load(f))
 
-            # portable paths
             for clip_id, info in merged.items():
                 if "video_pt" in info:
                     info["video_pt"] = _rel_to_offline_root(Path(info["video_pt"]), self.cfg.offline_root)
@@ -285,7 +287,11 @@ def main() -> None:
 
     print(f"[INFO] Found {len(video_pt_files)} Stage-1 video .pt files.")
 
-    dm = AudioExportDataModule(video_pt_files=video_pt_files, batch_size=args.batch_size, num_workers=args.num_workers)
+    dm = AudioExportDataModule(
+        video_pt_files=video_pt_files,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+    )
     module = OfflineAudioExporter(cfg)
 
     trainer = pl.Trainer(

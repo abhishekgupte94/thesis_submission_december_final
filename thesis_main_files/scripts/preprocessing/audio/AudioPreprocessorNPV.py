@@ -75,8 +75,8 @@ class AudioPreprocessorConfig:
     target_sr: int = 16_000
     n_fft: int = 400
     hop_length: int = 160
-    n_mels: int = 80
-    target_num_frames: int = 250
+    n_mels: int = 64
+    target_num_frames: int = 96
     eps: float = 1e-6
     normalize_utterance: bool = True
 
@@ -229,26 +229,44 @@ class AudioPreprocessorNPV:
     # - Calls this method so audio slicing matches video exactly
     # ==================================================================
     def process_and_save_from_segments_sec_segmentlocal(
-        self,
-        audio_path: Union[str, Path],
-        segments_sec: Sequence[Tuple[float, float]],
-        out_pt_path: Union[str, Path],
-        log_csv_path: Optional[Union[str, Path]] = None,
+            self,
+            audio_path: Union[str, Path],
+            segments_sec: Sequence[Tuple[float, float]],
+            out_pt_path: Union[str, Path],
+            log_csv_path: Optional[Union[str, Path]] = None,
+            *,
+            clip_id: Optional[Union[str, int]] = None,
+            overwrite: bool = False,
     ) -> Tuple[int, int]:
-        audio_path = Path(audio_path)
-        out_pt_path = Path(out_pt_path)
+        """
+        [MODIFIED] Save EACH mel segment as its OWN .pt file directly under <clip_id>/.
 
-        # [ADDED] num_words is no longer meaningful here; return 0 for compatibility
-        num_words = 0
+        Treat out_pt_path as an OUTPUT ROOT DIRECTORY (not a file):
+            out_root/<clip_id>/<clip_id>_0000.pt
+            out_root/<clip_id>/<clip_id>_0001.pt
+            ...
+
+        Each .pt contains ONLY the mel Tensor (64,96).
+        """
+        audio_path = Path(audio_path)
+        out_root = Path(out_pt_path)
+
+        num_words = 0  # kept for caller compatibility
+
+        clip_id_str = str(clip_id) if clip_id is not None else audio_path.stem
 
         wav, sr = self._load_audio_file(audio_path)
         wav = self._standardize_waveform(wav, sr)
 
+        # ==========================================================
+        # This is the exact timestamp-driven loop you referenced:
+        # segments_sec comes from video .pt, so this aligns with video.
+        # ==========================================================
         clips = self.slice_waveform_with_segments(wav, segments_sec)
         mel_segments: List[Tensor] = [self._waveform_to_logmel(c) for c in clips]
         num_segments = len(mel_segments)
 
-        # dtype safety (same checks style as before)
+        # dtype/shape safety (unchanged)
         for idx, mel in enumerate(mel_segments):
             if not isinstance(mel, torch.Tensor):
                 raise TypeError(f"mel_segments[{idx}] is not a Tensor (got {type(mel)})")
@@ -259,29 +277,32 @@ class AudioPreprocessorNPV:
             if mel.dtype != torch.float32:
                 mel_segments[idx] = mel.float()
 
-        out_pt_path.parent.mkdir(parents=True, exist_ok=True)
+        # [MODIFIED] Directory: out_root/<clip_id>/
+        clip_dir = out_root / clip_id_str
+        clip_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save ONLY the 3 requested keys (unchanged format)
-        # save_payload = {
-        #     "audio_file": audio_path.name,
-        #     "mel_segments": mel_segments,
-        #     "segments_sec": list(segments_sec),
-        # }
-        # torch.save(save/_payload, out_pt_path)
-        torch.save(mel_segments, out_pt_path)
+        saved = 0
+        for seg_idx, mel in enumerate(mel_segments):
+            out_seg_pt = clip_dir / f"{clip_id_str}_{seg_idx:04d}.pt"
+
+            if out_seg_pt.exists() and not overwrite:
+                raise FileExistsError(f"Refusing to overwrite existing file: {out_seg_pt}")
+
+            torch.save(mel, out_seg_pt)  # <-- payload is ONLY the Tensor
+            saved += 1
+
+        # Logging
         if log_csv_path is not None:
             log_csv_path = Path(log_csv_path)
             log_csv_path.parent.mkdir(parents=True, exist_ok=True)
             file_exists = log_csv_path.exists()
-
-            pt_rel_path = _to_rel_data_path(out_pt_path)
             with log_csv_path.open("a", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
                 if not file_exists:
-                    writer.writerow(["audio_file", "pt_rel_path", "num_words", "num_segments"])
-                writer.writerow([audio_path.name, pt_rel_path, num_words, num_segments])
+                    writer.writerow(["clip_id", "audio_file", "clip_dir", "num_words", "num_segments"])
+                writer.writerow([clip_id_str, audio_path.name, _to_rel_data_path(clip_dir), num_words, saved])
 
-        return num_segments, num_words
+        return saved, num_words
 
     def process_and_save_from_timestamps_csv_segmentlocal(
         self,
@@ -349,12 +370,12 @@ class AudioPreprocessorNPV:
 
         out_pt_path.parent.mkdir(parents=True, exist_ok=True)
 
-        save_payload = {
-            "audio_file": audio_path.name,
-            "mel_segments": mel_segments,
-            "segments_sec": segments,
-        }
-        torch.save(save_payload, out_pt_path)
+        # save_payload = {
+        #     "audio_file": audio_path.name,
+        #     "mel_segments": mel_segments,
+        #     "segments_sec": segments,
+        # }
+        torch.save(mel_segments, out_pt_path)
 
         if log_csv_path is not None:
             log_csv_path = Path(log_csv_path)

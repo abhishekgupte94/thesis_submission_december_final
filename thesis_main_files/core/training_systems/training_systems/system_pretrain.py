@@ -20,9 +20,41 @@ from typing import Any, Dict, Optional
 
 import torch
 from torch import nn
-import lightning
+import lightning as pl  # [MODIFIED] alias for LightningModule/Trainer APIs
 
-from core.training_systems.architectures.pretrain_architecture import AVPretrainArchitecture, ArchitectureConfig
+# --------------------------------------------------------------
+# [ADDED] Loggers (TensorBoard/CSV) helper utilities
+# --------------------------------------------------------------
+from lightning.pytorch.loggers import TensorBoardLogger, CSVLogger
+from lightning.pytorch.utilities.rank_zero import rank_zero_only
+
+from core.training_systems.architectures.pretrain_architecture import (
+    AVPretrainArchitecture,
+    ArchitectureConfig,
+)
+
+
+# --------------------------------------------------------------
+# [ADDED] Convenience: build default Lightning loggers
+# --------------------------------------------------------------
+def build_pretrain_loggers(
+    save_dir: str = "logs",
+    name: str = "ssl_pretrain",
+    version: Optional[str] = None,
+    enable_csv: bool = True,
+):
+    """
+    Returns a list of loggers (TensorBoard + optional CSV).
+
+    Use like:
+        loggers = build_pretrain_loggers(save_dir="logs", name="ssl_pretrain")
+        trainer = pl.Trainer(..., logger=loggers)
+    """
+    tb = TensorBoardLogger(save_dir=save_dir, name=name, version=version)
+    if enable_csv:
+        csv = CSVLogger(save_dir=save_dir, name=name, version=version)
+        return [tb, csv]
+    return tb
 
 
 class AVPretrainSystem(pl.LightningModule):
@@ -58,6 +90,8 @@ class AVPretrainSystem(pl.LightningModule):
         # Optim configuration
         self.lr = float(lr)
         self.weight_decay = float(weight_decay)
+
+        # Loss weights
         self.lambda_vacl = float(lambda_vacl)
         self.lambda_cpe = float(lambda_cpe)
         self.use_plateau_scheduler = bool(use_plateau_scheduler)
@@ -71,42 +105,53 @@ class AVPretrainSystem(pl.LightningModule):
         # --------------------------------------------------------------
 
     # --------------------------------------------------------------
+    # [ADDED] Handy: show logger locations once per run (rank-zero)
+    # --------------------------------------------------------------
+    @rank_zero_only
+    def on_fit_start(self) -> None:
+        # This does NOT change training logic; it's just a helpful print for thesis runs.
+        try:
+            lg = self.logger
+            if lg is None:
+                return
+            # Lightning may wrap multiple loggers in LoggerCollection
+            if hasattr(lg, "loggers"):
+                for sub in lg.loggers:
+                    if hasattr(sub, "log_dir"):
+                        print(f"[LOGGER] {type(sub).__name__} log_dir: {sub.log_dir}")
+            elif hasattr(lg, "log_dir"):
+                print(f"[LOGGER] {type(lg).__name__} log_dir: {lg.log_dir}")
+        except Exception:
+            # Never let logging impact training.
+            return
+
+    # --------------------------------------------------------------
     # Forward just delegates to the architecture  (B1.10)
     # --------------------------------------------------------------
     def forward(self, batch: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Forward pass used for:
-            - training_step / validation_step
-            - optional inference / feature extraction
-
-        Simply delegates to the underlying architecture.
-        """
         return self.arch(batch)
 
     # --------------------------------------------------------------
-    # Loss extraction & combination
+    # [ADDED] Loss extraction (B2.10)
     # --------------------------------------------------------------
     def _extract_losses(self, out: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         """
-        Extract and combine loss components from architecture outputs.
-
-        This function should:
-          - Read loss terms from `module_a_out` and `module_b_out`
-          - Apply lambda_vacl / lambda_cpe weights
-          - Return all as tensors (no .item() here)
-
-        Replace the example implementation body with your existing one
-        if it already does this.
+        Extract module losses from the architecture output dict.
+        Enforces keys so downstream logging is consistent.
         """
-        module_a_out = out["module_a_out"]
-        module_b_out = out["module_b_out"]
+        # Your architecture should return a dict that contains module outputs
+        # (or directly contains losses). This block expects:
+        #   out["module_a_out"]["L_vacl"]
+        #   out["module_b_out"]["L_cpe"]   (or "L_ec")
+        module_a_out = out.get("module_a_out", {})
+        module_b_out = out.get("module_b_out", {})
 
-        # We assume your VACL head exposes a scalar loss like "L_vacl"
+        # VACL loss
         L_vacl = module_a_out.get("L_vacl")
         if L_vacl is None:
             raise KeyError("module_a_out must contain key 'L_vacl'")
 
-        # And your CPE/EC head exposes a scalar loss like "L_cpe" or "L_ec"
+        # CPE/EC loss
         L_cpe = module_b_out.get("L_cpe") or module_b_out.get("L_ec")
         if L_cpe is None:
             raise KeyError("module_b_out must contain key 'L_cpe' or 'L_ec'")
@@ -210,17 +255,16 @@ class AVPretrainSystem(pl.LightningModule):
         for name, p in self.named_parameters():  # [ADDED]
             if not p.requires_grad:
                 continue
-            if "swin" in name:
+            if "swin" in name.lower() or "backbone" in name.lower():
                 backbone_params.append(p)
             else:
                 head_params.append(p)
 
         optimizer = torch.optim.AdamW(
             [
-                {"params": backbone_params},  # [ADDED]
-                {"params": head_params},      # [ADDED]
+                {"params": backbone_params, "lr": self.lr},
+                {"params": head_params, "lr": self.lr},
             ],
-            lr=self.lr,
             weight_decay=self.weight_decay,
         )
 
@@ -230,6 +274,7 @@ class AVPretrainSystem(pl.LightningModule):
                 mode="min",
                 factor=0.5,
                 patience=3,
+                verbose=True,
             )
             return {
                 "optimizer": optimizer,
