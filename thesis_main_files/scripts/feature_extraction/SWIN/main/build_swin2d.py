@@ -34,7 +34,7 @@ class BuildSwin2DConfig:
     # Note: we also default IMG_SIZE to 224x224 to match the tiny config name.
     # For audio, the sanity script will resize a log-mel image to (224,224).
     # ----------------------------------------------------------------------------------
-    img_size: Tuple[int, int] = (224, 224)
+    img_size: Tuple[int, int] = (64, 96)
     in_chans: int = 1
     embed_dim: int = 96
 
@@ -42,7 +42,7 @@ class BuildSwin2DConfig:
     # [MODIFIED] Defaults set to tiny; still overridable if you pass explicit args.
     depths: Optional[Sequence[int]] = (2, 2, 6, 2)
     num_heads: Optional[Sequence[int]] = (3, 6, 12, 24)
-    window_size: Optional[int] = 7
+    window_size: Optional[int] = 8
 
     use_checkpoint: bool = False
 
@@ -87,6 +87,8 @@ class Swin2DTokenAdapter(nn.Module):
 
     def forward_features(self, x: torch.Tensor) -> torch.Tensor:
         # Calls official backbone path; no re-implementation here.
+        print("x:", x.shape)  # should be (B, C, H, W) e.g. (1,1,96,64)
+
         tokens = self.backbone.forward_features(x)  # (B, L, C)
         return tokens
 
