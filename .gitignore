@@ -207,3 +207,43 @@ thesis_main_files/data/raw/metadata/dfdc/*
 thesis_main_files/data/raw/metadata/celeb-df/*
 !thesis_main_files/data/raw/metadata/celeb-df/.gitkeep
 !thesis_main_files/data/raw/metadata/celeb-df/
+
+# Ignore files in thesis_main_files/data/processed/LAV_DF/, but allow the directory and its .gitkeep
+thesis_main_files/data/processed/LAV_DF/*
+!thesis_main_files/data/processed/LAV_DF/.gitkeep
+!thesis_main_files/data/processed/LAV_DF/
+
+# Ignore files in thesis_main_files/data/processed/LAV_DF/LAV_DF_timestamps_json_for_offline_training, but allow the directory and its .gitkeep
+thesis_main_files/data/processed/LAV_DF/LAV_DF_timestamps_json_for_offline_training/*
+!thesis_main_files/data/processed/LAV_DF/LAV_DF_timestamps_json_for_offline_training/.gitkeep
+!thesis_main_files/data/processed/LAV_DF/LAV_DF_timestamps_json_for_offline_training/
+
+# Ignore files in thesis_main_files/data/processed/video_files/LAV_DF/, but allow the directory and its .gitkeep
+thesis_main_files/data/processed/video_files/LAV_DF/*
+!thesis_main_files/data/processed/video_files/LAV_DF/.gitkeep
+!thesis_main_files/data/processed/video_files/LAV_DF/
+
+# Ignore files in thesis_main_files/data/processed/video_files/LAV_DF/audio, but allow the directory and its .gitkeep
+thesis_main_files/data/processed/video_files/LAV_DF/audio*
+!thesis_main_files/data/processed/video_files/LAV_DF/audio.gitkeep
+!thesis_main_files/data/processed/video_files/LAV_DF/audio
+
+# Ignore files in thesis_main_files/data/processed/video_files/LAV_DF/video, but allow the directory and its .gitkeep
+thesis_main_files/data/processed/video_files/LAV_DF/video*
+!thesis_main_files/data/processed/video_files/LAV_DF/video.gitkeep
+!thesis_main_files/data/processed/video_files/LAV_DF/video
+
+# Ignore files in thesis_main_files/data/processed/splits/test/, but allow the directory and its .gitkeep
+thesis_main_files/data/processed/splits/test/*
+!thesis_main_files/data/processed/splits/test/*.gitkeep
+!thesis_main_files/data/processed/splits/test/*
+
+# Ignore files in thesis_main_files/data/processed/splits/train/, but allow the directory and its .gitkeep
+thesis_main_files/data/processed/splits/train/*
+!thesis_main_files/data/processed/splits/train/*.gitkeep
+!thesis_main_files/data/processed/splits/train/*
+
+# Ignore files in thesis_main_files/data/processed/splits/val/, but allow the directory and its .gitkeep
+thesis_main_files/data/processed/splits/val/*
+!thesis_main_files/data/processed/splits/val/*.gitkeep
+!thesis_main_files/data/processed/splits/val/*

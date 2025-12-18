@@ -1,293 +1,295 @@
 # system_pretrain.py
-
-"""
-Lightning system wrapper for AVPretrainArchitecture.
-
-This module defines AVPretrainSystem, a pl.LightningModule that:
-    - wraps AVPretrainArchitecture
-    - defines training/validation steps
-    - configures optimizers/schedulers
-
-IMPORTANT:
-    - Sections marked "KEEP YOUR ORIGINAL IMPLEMENTATION HERE" are
-      placeholders where you should paste your existing logic.
-    - Changes are marked with [ADDED] / [MODIFIED].
-"""
+# ============================================================
+# [FINAL PATCHED] AVPretrainSystem (LightningModule)
+#
+# Responsibilities:
+#   - Receives already-collated batches from DataModule
+#   - Moves tensors to GPU (Lightning hook)
+#   - Runs forward pass
+#   - Logs train / val losses to TensorBoard
+#   - Optionally tracks energy (CodeCarbon) and FLOPs (fvcore)
+#
+# IMPORTANT:
+#   - No model construction here
+#   - No .to(device) inside architecture/backbones
+# ============================================================
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Set, Optional
 
 import torch
-from torch import nn
-import lightning as pl  # [MODIFIED] alias for LightningModule/Trainer APIs
-
-# --------------------------------------------------------------
-# [ADDED] Loggers (TensorBoard/CSV) helper utilities
-# --------------------------------------------------------------
-from lightning.pytorch.loggers import TensorBoardLogger, CSVLogger
-from lightning.pytorch.utilities.rank_zero import rank_zero_only
-
-from core.training_systems.architectures.pretrain_architecture import (
-    AVPretrainArchitecture,
-    ArchitectureConfig,
-)
+import lightning as pl
 
 
-# --------------------------------------------------------------
-# [ADDED] Convenience: build default Lightning loggers
-# --------------------------------------------------------------
-def build_pretrain_loggers(
-    save_dir: str = "logs",
-    name: str = "ssl_pretrain",
-    version: Optional[str] = None,
-    enable_csv: bool = True,
-):
-    """
-    Returns a list of loggers (TensorBoard + optional CSV).
+# ============================================================
+# [ADDED] Optional energy tracking (CodeCarbon)
+# ============================================================
+try:
+    from codecarbon import EmissionsTracker  # type: ignore
+    _HAS_CODECARBON = True
+except Exception:
+    EmissionsTracker = None  # type: ignore
+    _HAS_CODECARBON = False
 
-    Use like:
-        loggers = build_pretrain_loggers(save_dir="logs", name="ssl_pretrain")
-        trainer = pl.Trainer(..., logger=loggers)
-    """
-    tb = TensorBoardLogger(save_dir=save_dir, name=name, version=version)
-    if enable_csv:
-        csv = CSVLogger(save_dir=save_dir, name=name, version=version)
-        return [tb, csv]
-    return tb
+
+# ============================================================
+# [ADDED] Optional FLOPs profiling (fvcore)
+# ============================================================
+try:
+    from fvcore.nn import FlopCountAnalysis  # type: ignore
+    _HAS_FVCORE = True
+except Exception:
+    FlopCountAnalysis = None  # type: ignore
+    _HAS_FVCORE = False
 
 
 class AVPretrainSystem(pl.LightningModule):
-    """
-    LightningModule that *trains* the AVPretrainArchitecture using
-    VACL + CPE/EC losses.
-
-    Expected usage:
-        - Construct an AVPretrainArchitecture externally
-        - Wrap it in AVPretrainSystem
-        - Pass this system to pl.Trainer(...).fit()
-
-    NOTE:
-        The architecture is pure nn.Module (no training logic inside).
-        All training behaviour lives here (loss combination, logging,
-        optimizers, schedulers).
-    """
-
     def __init__(
         self,
-        architecture: AVPretrainArchitecture,
+        *,
+        model: torch.nn.Module,
         lr: float = 1e-4,
         weight_decay: float = 1e-2,
         lambda_vacl: float = 1.0,
         lambda_cpe: float = 1.0,
-        use_plateau_scheduler: bool = True,
+        # ============================================================
+        # [ADDED] Profiling toggles
+        # ============================================================
+        enable_energy_tracking: bool = False,
+        enable_flops_profile: bool = False,
     ) -> None:
         super().__init__()
 
-        # Store the wrapped architecture
-        self.arch = architecture
-
-        # Optim configuration
+        # [KEPT]
+        self.model = model
         self.lr = float(lr)
         self.weight_decay = float(weight_decay)
-
-        # Loss weights
         self.lambda_vacl = float(lambda_vacl)
         self.lambda_cpe = float(lambda_cpe)
-        self.use_plateau_scheduler = bool(use_plateau_scheduler)
 
-        # This is already Lightning-idiomatic (B1.9)
-        self.save_hyperparameters(ignore=["architecture"])
+        # [ADDED]
+        self.enable_energy_tracking = bool(enable_energy_tracking)
+        self.enable_flops_profile = bool(enable_flops_profile)
+        self._emissions_tracker: Optional[object] = None
 
-        # --------------------------------------------------------------
-        # KEEP ANY EXTRA METRIC OBJECTS OR STATE YOU ALREADY HAD
-        # (e.g. torchmetrics.Accuracy, EMA trackers, etc.)
-        # --------------------------------------------------------------
+        # ============================================================
+        # [ADDED] Checkpoint saving config (DDP-safe: rank0 only saves)
+        # ============================================================
+        self.save_dir = "checkpoints"
+        self.save_every_n_epochs = 1
+        self.save_weights_only = True
+        self._best_val = float("inf")
 
-    # --------------------------------------------------------------
-    # [ADDED] Handy: show logger locations once per run (rank-zero)
-    # --------------------------------------------------------------
-    @rank_zero_only
+    # ============================================================
+    # [ADDED] Lightning hook: move batch to GPU & normalize
+    # ============================================================
+    def transfer_batch_to_device(self, batch, device, dataloader_idx):
+        """
+        batch keys:
+          - audio          : (B, n_mels, T_audio) float32
+          - video_u8_cthw  : (B, 3, T_video, H, W) uint8
+        """
+
+        batch["audio"] = batch["audio"].to(device, non_blocking=True)
+
+        batch["video"] = (
+            batch["video_u8_cthw"]
+            .to(device, non_blocking=True)
+            .float()
+            .div_(255.0)
+        )
+
+        return batch
+
+    # ============================================================
+    # [ADDED] Start trackers once at fit start
+    # ============================================================
     def on_fit_start(self) -> None:
-        # This does NOT change training logic; it's just a helpful print for thesis runs.
-        try:
-            lg = self.logger
-            if lg is None:
-                return
-            # Lightning may wrap multiple loggers in LoggerCollection
-            if hasattr(lg, "loggers"):
-                for sub in lg.loggers:
-                    if hasattr(sub, "log_dir"):
-                        print(f"[LOGGER] {type(sub).__name__} log_dir: {sub.log_dir}")
-            elif hasattr(lg, "log_dir"):
-                print(f"[LOGGER] {type(lg).__name__} log_dir: {lg.log_dir}")
-        except Exception:
-            # Never let logging impact training.
+        if self.enable_energy_tracking and _HAS_CODECARBON and self.global_rank == 0:
+            self._emissions_tracker = EmissionsTracker(
+                project_name="stage1_ssl",
+                output_dir="codecarbon_logs",
+                log_level="error",
+            )
+            self._emissions_tracker.start()
+
+        if self.enable_flops_profile and _HAS_FVCORE and self.global_rank == 0:
+            try:
+                self._profile_flops_once()
+            except Exception as e:
+                self.print(f"[WARN] FLOPs profiling failed: {e}")
+
+    # ============================================================
+    # [ADDED] Stop trackers at end
+    # ============================================================
+    def on_fit_end(self) -> None:
+        if self.enable_energy_tracking and _HAS_CODECARBON and self._emissions_tracker is not None:
+            if self.global_rank == 0:
+                emissions = self._emissions_tracker.stop()
+                if emissions is not None:
+                    self.log(
+                        "energy/co2_kg",
+                        float(emissions),
+                        on_step=False,
+                        on_epoch=True,
+                        prog_bar=False,
+                        sync_dist=False,
+                    )
+
+    # ============================================================
+    # [ADDED] FLOPs profiling helper (best-effort)
+    # ============================================================
+    def _profile_flops_once(self) -> None:
+        B, T, H, W = 1, 4, 224, 224
+
+        dummy_video = torch.zeros((B, 3, T, H, W), device=self.device)
+        dummy_audio = torch.zeros((B, 1, 64, 96), device=self.device)
+
+        def _forward():
+            return self.model(video_in=dummy_video, audio_in=dummy_audio)
+
+        flops = FlopCountAnalysis(_forward, ())
+        self.log(
+            "profile/flops_per_forward",
+            float(flops.total()),
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+            sync_dist=False,
+        )
+
+    # ============================================================
+    # [PATCHED] Training step with TensorBoard logging
+    # ============================================================
+    def training_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
+        audio = batch["audio"].unsqueeze(1)
+        video = batch["video"]
+
+        out = self.model(video_in=video, audio_in=audio)
+
+        # [ADDED] Log padding stats occasionally
+        if batch_idx % 50 == 0:
+            if "Tv_max" in batch:
+                self.log("train/Tv_max", float(batch["Tv_max"]), on_step=True, prog_bar=False, sync_dist=True)
+            if "Ta_max" in batch:
+                self.log("train/Ta_max", float(batch["Ta_max"]), on_step=True, prog_bar=False, sync_dist=True)
+
+        loss_total = out["loss_total"]
+        self.log("train/loss_total", loss_total, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
+
+        # [ADDED] Component losses
+        if "loss_vacl" in out and out["loss_vacl"] is not None:
+            self.log("train/loss_vacl", out["loss_vacl"], on_step=True, on_epoch=True, sync_dist=True)
+        if "loss_cpe" in out and out["loss_cpe"] is not None:
+            self.log("train/loss_cpe", out["loss_cpe"], on_step=True, on_epoch=True, sync_dist=True)
+
+        return loss_total
+
+    # ============================================================
+    # [ADDED] Validation step (SSL stability monitoring)
+    # ============================================================
+    def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
+        audio = batch["audio"].unsqueeze(1)
+        video = batch["video"]
+
+        out = self.model(video_in=video, audio_in=audio)
+
+        loss_total = out["loss_total"]
+        self.log("val/loss_total", loss_total, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+
+        if "loss_vacl" in out and out["loss_vacl"] is not None:
+            self.log("val/loss_vacl", out["loss_vacl"], on_step=False, on_epoch=True, sync_dist=True)
+        if "loss_cpe" in out and out["loss_cpe"] is not None:
+            self.log("val/loss_cpe", out["loss_cpe"], on_step=False, on_epoch=True, sync_dist=True)
+
+        return loss_total
+
+    # ============================================================
+    # [PATCHED] Explicit optimizer parameter groups (DDP-safe)
+    # ============================================================
+    def configure_optimizers(self):
+        def _ids(params: Iterable[torch.nn.Parameter]) -> Set[int]:
+            return {id(p) for p in params}
+
+        vb = getattr(self.model, "video_backbone", None)
+        ab = getattr(self.model, "audio_backbone", None)
+
+        vb_params = list(vb.parameters()) if vb is not None else []
+        ab_params = list(ab.parameters()) if ab is not None else []
+
+        vb_ids = _ids(vb_params)
+        ab_ids = _ids(ab_params)
+
+        other_params = [
+            p for p in self.model.parameters()
+            if id(p) not in vb_ids and id(p) not in ab_ids
+        ]
+
+        param_groups = [
+            {"params": [p for p in vb_params if p.requires_grad], "lr": self.lr, "weight_decay": self.weight_decay},
+            {"params": [p for p in ab_params if p.requires_grad], "lr": self.lr, "weight_decay": self.weight_decay},
+            {"params": [p for p in other_params if p.requires_grad], "lr": self.lr, "weight_decay": self.weight_decay},
+        ]
+
+        return torch.optim.AdamW(param_groups)
+
+    # ============================================================
+    # [ADDED] Rank-0 checkpoint saver (full .ckpt + optional weights-only)
+    # ============================================================
+    def _save_checkpoint_files(self, tag: str) -> None:
+        """
+        Saves:
+          - Full Lightning checkpoint: <save_dir>/<tag>.ckpt
+          - Optional weights-only:     <save_dir>/<tag>_weights.pt
+
+        DDP-safe: only runs on global_rank == 0.
+        """
+        if self.global_rank != 0:
             return
 
-    # --------------------------------------------------------------
-    # Forward just delegates to the architecture  (B1.10)
-    # --------------------------------------------------------------
-    def forward(self, batch: Dict[str, Any]) -> Dict[str, Any]:
-        return self.arch(batch)
+        from pathlib import Path
 
-    # --------------------------------------------------------------
-    # [ADDED] Loss extraction (B2.10)
-    # --------------------------------------------------------------
-    def _extract_losses(self, out: Dict[str, Any]) -> Dict[str, torch.Tensor]:
-        """
-        Extract module losses from the architecture output dict.
-        Enforces keys so downstream logging is consistent.
-        """
-        # Your architecture should return a dict that contains module outputs
-        # (or directly contains losses). This block expects:
-        #   out["module_a_out"]["L_vacl"]
-        #   out["module_b_out"]["L_cpe"]   (or "L_ec")
-        module_a_out = out.get("module_a_out", {})
-        module_b_out = out.get("module_b_out", {})
+        save_root = Path(self.save_dir)
+        save_root.mkdir(parents=True, exist_ok=True)
 
-        # VACL loss
-        L_vacl = module_a_out.get("L_vacl")
-        if L_vacl is None:
-            raise KeyError("module_a_out must contain key 'L_vacl'")
+        # Full Lightning checkpoint (includes optimizer, schedulers, etc.)
+        ckpt_path = save_root / f"{tag}.ckpt"
+        self.trainer.save_checkpoint(str(ckpt_path))
 
-        # CPE/EC loss
-        L_cpe = module_b_out.get("L_cpe") or module_b_out.get("L_ec")
-        if L_cpe is None:
-            raise KeyError("module_b_out must contain key 'L_cpe' or 'L_ec'")
-
-        # Weighted total loss (matches your original lambda_vacl/cpe usage)
-        L_total = self.lambda_vacl * L_vacl + self.lambda_cpe * L_cpe
-
-        return {
-            "L_vacl": L_vacl,
-            "L_cpe": L_cpe,
-            "L_total": L_total,
-        }
-
-    # --------------------------------------------------------------
-    # [ADDED] Centralised loss combiner (B2.11)
-    # --------------------------------------------------------------
-    def compute_total_loss(self, out: Dict[str, Any]) -> Dict[str, torch.Tensor]:
-        """
-        Thin wrapper around `_extract_losses` so that
-        training/validation steps stay minimal and we have a single
-        place where the final scalar `L_total` is defined.
-        """
-        return self._extract_losses(out)
-
-    # --------------------------------------------------------------
-    # Training / validation steps (B2.12, B2.13)
-    # --------------------------------------------------------------
-    def training_step(self, batch: Dict[str, Any], batch_idx: int):
-        out = self.forward(batch)
-        loss_dict = self.compute_total_loss(out)  # [MODIFIED]
-        loss = loss_dict["L_total"]
-
-        # DDP-safe logging with sync_dist=True
-        self.log(
-            "train/loss",
-            loss,
-            prog_bar=True,
-            on_step=True,
-            on_epoch=True,
-            sync_dist=True,  # [ADDED]
-        )
-        self.log(
-            "train/L_vacl",
-            loss_dict["L_vacl"],
-            on_step=True,
-            on_epoch=True,
-            sync_dist=True,  # [ADDED]
-        )
-        self.log(
-            "train/L_cpe",
-            loss_dict["L_cpe"],
-            on_step=True,
-            on_epoch=True,
-            sync_dist=True,  # [ADDED]
-        )
-
-        return loss
-
-    def validation_step(self, batch: Dict[str, Any], batch_idx: int):
-        out = self.forward(batch)
-        loss_dict = self.compute_total_loss(out)  # [MODIFIED]
-        loss = loss_dict["L_total"]
-
-        self.log(
-            "val/loss",
-            loss,
-            prog_bar=True,
-            on_epoch=True,
-            sync_dist=True,  # [ADDED]
-        )
-        self.log(
-            "val/L_vacl",
-            loss_dict["L_vacl"],
-            on_epoch=True,
-            sync_dist=True,  # [ADDED]
-        )
-        self.log(
-            "val/L_cpe",
-            loss_dict["L_cpe"],
-            on_epoch=True,
-            sync_dist=True,  # [ADDED]
-        )
-
-        return loss
-
-    # --------------------------------------------------------------
-    # [MODIFIED] Optimizer + optional LR scheduler (B3.14)
-    # --------------------------------------------------------------
-    def configure_optimizers(self):
-        """
-        Advanced optimizer configuration with AdamW and
-        optional ReduceLROnPlateau scheduler.
-
-        - Separates Swin backbone params from the rest (param groups).
-        - Currently uses the same learning rate for both groups, but
-          this makes it very easy to adjust them separately later.
-        """
-        backbone_params = []  # [ADDED]
-        head_params = []      # [ADDED]
-
-        for name, p in self.named_parameters():  # [ADDED]
-            if not p.requires_grad:
-                continue
-            if "swin" in name.lower() or "backbone" in name.lower():
-                backbone_params.append(p)
-            else:
-                head_params.append(p)
-
-        optimizer = torch.optim.AdamW(
-            [
-                {"params": backbone_params, "lr": self.lr},
-                {"params": head_params, "lr": self.lr},
-            ],
-            weight_decay=self.weight_decay,
-        )
-
-        if self.use_plateau_scheduler:
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer,
-                mode="min",
-                factor=0.5,
-                patience=3,
-                verbose=True,
-            )
-            return {
-                "optimizer": optimizer,
-                "lr_scheduler": {
-                    "scheduler": scheduler,
-                    "monitor": "val/loss",
-                },
+        # Weights-only payload (small, for inference/extraction)
+        if self.save_weights_only:
+            weights_path = save_root / f"{tag}_weights.pt"
+            payload = {
+                "state_dict": self.model.state_dict(),
+                "epoch": int(self.current_epoch),
+                "global_step": int(self.global_step),
             }
+            torch.save(payload, weights_path)
 
-        # If scheduler is disabled, just return the optimizer
-        return optimizer
+    # ============================================================
+    # [ADDED] Save "last" every N epochs
+    # ============================================================
+    def on_train_epoch_end(self) -> None:
+        if (int(self.current_epoch) + 1) % int(self.save_every_n_epochs) == 0:
+            self._save_checkpoint_files(tag="last")
 
-    # --------------------------------------------------------------
-    # KEEP YOUR EXISTING FLOP PROFILING / CALLBACK HOOKS HERE
-    # (if you already had a profile_flops() or similar)
-    # --------------------------------------------------------------
+    # ============================================================
+    # [ADDED] Track best val loss and save "best"
+    # ============================================================
+    def on_validation_epoch_end(self) -> None:
+        metric = self.trainer.callback_metrics.get("val/loss_total", None)
+        if metric is None:
+            return
+
+        try:
+            val_loss = float(metric.detach().cpu())
+        except Exception:
+            val_loss = float(metric)
+
+        if val_loss < self._best_val:
+            self._best_val = val_loss
+            self._save_checkpoint_files(tag="best")
+
+
+

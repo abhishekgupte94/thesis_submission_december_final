@@ -3,8 +3,8 @@ import json
 
 # === Paths ===
 metadata_path = "/thesis_main_files/data/metadata/lav-df/metadata.json"
-test_dir = "/Users/abhishekgupte_macbookpro/Downloads/Datasets/LAV-DF/test"
-dev_dir = "/Users/abhishekgupte_macbookpro/Downloads/Datasets/LAV-DF/dev"
+test_dir = "/Users/abhishekgupte_macbookpro/Downloads/Datasets/LAV_DF/test"
+dev_dir = "/Users/abhishekgupte_macbookpro/Downloads/Datasets/LAV_DF/dev"
 
 # === Load metadata.json ===
 with open(metadata_path, 'r') as f:

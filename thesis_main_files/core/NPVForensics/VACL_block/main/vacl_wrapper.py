@@ -1,145 +1,195 @@
-from typing import Dict, Union
+# vacl_wrapper.py
+# ============================================================
+# [DROP-IN] VACLWrapper
+#
+# Purpose:
+#   - Wraps your VACL block (VACLVA) in a DDP/Lightning-friendly way
+#   - Ensures return_intermediates defaults to False (memory-safe)
+#   - Standardizes returned keys:
+#       "loss_vacl" (and optionally "loss" as alias)
+#   - Optionally strips bulky intermediates (B,S,S matrices etc.)
+#
+# Expected inputs:
+#   X_v: Tensor (B, D_v, S)  OR (B, S, D_v)  (we support both)
+#   X_a: Tensor (B, D_a, S)  OR (B, S, D_a)
+#
+# NOTE:
+#   - This wrapper does NOT move tensors to device.
+#   - This wrapper does NOT log (keep logging in Lightning system).
+# ============================================================
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
 
 import torch
 import torch.nn as nn
 
-# ----------------------------------------------------------------------
-# [DDP / LIGHTNING FRIENDLY IMPORT]
-# ----------------------------------------------------------------------
-# Avoid hard-coded single import path so this works on:
-#   - Mac sanity scripts
-#   - A100 training box
-#   - different repo roots
-# ----------------------------------------------------------------------
-try:
-    from core.NPVForensics.VACL_block.vacl_block import VACLVA  # type: ignore
-except Exception:  # pragma: no cover
-    from vacl_block import VACLVA
+# ============================================================
+# [EXISTING] Import your actual VACL block
+# ============================================================
+from core.NPVForensics.VACL_block.vacl_block import VACLVA
 
 
-class VACLProjectionHead(nn.Module):
-    """
-    Projection-head wrapper around VACLVA (sub-architecture).
+# ============================================================
+# [ADDED] Optional config container
+# ============================================================
+@dataclass
+class VACLWrapperConfig:
+    # [ADDED] safety defaults
+    return_intermediates: bool = False          # memory-safe default
+    strip_intermediates: bool = True            # drop big tensors from output
+    # [ADDED] expected token dimension ordering
+    expect_bds: bool = True                     # True expects (B,D,S); False expects (B,S,D)
 
-    Responsibilities:
-      1) Accept V/A features from upstream (post-SWIN).
-      2) Convert layout to (B, D, S) for VACLVA.
-      3) Run VACLVA (Eq. 9–16 unchanged).
-      4) Pool X_va over S to get a per-sample vector.
-      5) Linear projection to out_dim.
 
-    input_layout supported:
-      - "bsd": (B, S, D)
-      - "bds": (B, D, S)
-      - "sd" : (S, D)   (unbatched)
-      - "ds" : (D, S)   (unbatched)
-
-    pool:
-      - "mean", "max", "cls"
-    """
-
+class VACLWrapper(nn.Module):
     def __init__(
         self,
-        d_v: int,
-        d_a: int,
-        seq_len: int,
-        k: int,
-        out_dim: int,
-        mu: float = 0.5,
-        input_layout: str = "bsd",
-        pool: str = "mean",
-        force_fp32_inputs: bool = True,
-        return_intermediates: bool = False,
-    ):
+        # ============================================================
+        # [MODIFIED] Either pass a ready VACLVA instance OR its kwargs
+        # ============================================================
+        vacl: Optional[VACLVA] = None,
+        vacl_kwargs: Optional[Dict[str, Any]] = None,
+        # ============================================================
+        # [ADDED] Wrapper behaviour
+        # ============================================================
+        cfg: Optional[VACLWrapperConfig] = None,
+        return_intermediates: Optional[bool] = None,
+        strip_intermediates: Optional[bool] = None,
+        expect_bds: Optional[bool] = None,
+    ) -> None:
         super().__init__()
-        assert input_layout in ("bsd", "bds", "sd", "ds"), f"Unsupported input_layout={input_layout}"
-        assert pool in ("mean", "max", "cls"), f"Unsupported pool={pool}"
 
-        # [CONFIG]
-        self.input_layout = input_layout
-        self.pool = pool
-        # No-AMP friendly: cast incoming features to fp32 before VACL math.
-        self.force_fp32_inputs = bool(force_fp32_inputs)
-        # DDP efficiency: intermediates include large SxS maps; keep off by default.
-        self.return_intermediates = bool(return_intermediates)
+        self.cfg = cfg or VACLWrapperConfig()
 
-        # Core VACL block (Eq. 9–16 unchanged)
-        self.vacl = VACLVA(d_v=d_v, d_a=d_a, seq_len=seq_len, k=k, mu=mu)
+        # [ADDED] Allow override without forcing you to build a dataclass
+        if return_intermediates is not None:
+            self.cfg.return_intermediates = bool(return_intermediates)
+        if strip_intermediates is not None:
+            self.cfg.strip_intermediates = bool(strip_intermediates)
+        if expect_bds is not None:
+            self.cfg.expect_bds = bool(expect_bds)
 
-        # Projection head: (d_v + d_a) -> out_dim
-        self.proj = nn.Linear(d_v + d_a, out_dim)
+        # [MODIFIED] Build underlying VACLVA once (DDP-safe)
+        if vacl is not None:
+            self.vacl = vacl
+        else:
+            vacl_kwargs = vacl_kwargs or {}
+            self.vacl = VACLVA(**vacl_kwargs)
 
-    def _to_bds(self, X: torch.Tensor) -> torch.Tensor:
+    # ============================================================
+    # [ADDED] Shape adapter: normalize to what your VACLVA expects
+    # ============================================================
+    @staticmethod
+    def _to_expected_layout(x: torch.Tensor, expect_bds: bool) -> torch.Tensor:
         """
-        Convert input to (B, D, S) for VACLVA.
+        If expect_bds=True, ensures shape (B,D,S).
+        If expect_bds=False, ensures shape (B,S,D).
         """
-        if self.input_layout == "bds":
-            if X.dim() != 3:
-                raise ValueError(f"Expected (B, D, S) for 'bds', got {tuple(X.shape)}")
-            return X.contiguous()
+        if x.ndim != 3:
+            raise ValueError(f"Expected 3D tensor (B,*,*), got shape {tuple(x.shape)}")
 
-        if self.input_layout == "bsd":
-            if X.dim() != 3:
-                raise ValueError(f"Expected (B, S, D) for 'bsd', got {tuple(X.shape)}")
-            return X.transpose(1, 2).contiguous()
+        B, A, C = x.shape
 
-        if self.input_layout == "sd":
-            if X.dim() != 2:
-                raise ValueError(f"Expected (S, D) for 'sd', got {tuple(X.shape)}")
-            return X.transpose(0, 1).unsqueeze(0).contiguous()  # (1, D, S)
+        # Heuristic: if expect_bds and second dim is "token count" (S) not "feature dim" (D),
+        # user may have passed (B,S,D). We transpose.
+        # We do NOT guess aggressively; we follow expect_bds.
+        if expect_bds:
+            # want (B,D,S)
+            # if likely (B,S,D), transpose last two dims
+            # (B,S,D) -> (B,D,S)
+            return x.transpose(1, 2).contiguous() if A < C else x
+        else:
+            # want (B,S,D)
+            # if likely (B,D,S), transpose last two dims
+            # (B,D,S) -> (B,S,D)
+            return x.transpose(1, 2).contiguous() if A > C else x
 
-        if self.input_layout == "ds":
-            if X.dim() != 2:
-                raise ValueError(f"Expected (D, S) for 'ds', got {tuple(X.shape)}")
-            return X.unsqueeze(0).contiguous()  # (1, D, S)
-
-        raise ValueError(f"Unsupported input_layout={self.input_layout}")
-
-    def _pool_temporal(self, X_va: torch.Tensor) -> torch.Tensor:
-        """
-        X_va : (B, D, S) -> (B, D)
-        """
-        if self.pool == "mean":
-            return X_va.mean(dim=-1)
-        if self.pool == "max":
-            return X_va.max(dim=-1).values
-        return X_va[..., 0]  # "cls"
-
+    # ============================================================
+    # [ADDED] Forward
+    # ============================================================
     def forward(
         self,
+        *,
         X_v: torch.Tensor,
         X_a: torch.Tensor,
-        return_dict: bool = True,
-    ) -> Union[Dict[str, torch.Tensor], torch.Tensor]:
+        compute_infonce: bool = True,
+        return_intermediates: Optional[bool] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
         """
-        Returns:
-          - if return_dict: dict containing proj + L_cor (+ optional intermediates)
-          - else: proj only
+        Returns a dict with at least:
+          - loss_vacl : Tensor scalar
+          - (optionally) other diagnostic tensors if not stripped
         """
-        X_v_bds = self._to_bds(X_v)
-        X_a_bds = self._to_bds(X_a)
+        # [ADDED] Resolve flags
+        if return_intermediates is None:
+            return_intermediates = bool(self.cfg.return_intermediates)
 
-        if self.force_fp32_inputs:
-            if X_v_bds.dtype != torch.float32:
-                X_v_bds = X_v_bds.float()
-            if X_a_bds.dtype != torch.float32:
-                X_a_bds = X_a_bds.float()
+        # [ADDED] Normalize tensor layout (keeps caller flexible)
+        X_v = self._to_expected_layout(X_v, expect_bds=self.cfg.expect_bds)
+        X_a = self._to_expected_layout(X_a, expect_bds=self.cfg.expect_bds)
 
+        # [ADDED] Basic integrity check: ensure same S
+        if self.cfg.expect_bds:
+            # (B,D,S)
+            if X_v.shape[2] != X_a.shape[2]:
+                raise ValueError(f"VACL expects same S for both modalities. Got Sv={X_v.shape[2]} Sa={X_a.shape[2]}")
+        else:
+            # (B,S,D)
+            if X_v.shape[1] != X_a.shape[1]:
+                raise ValueError(f"VACL expects same S for both modalities. Got Sv={X_v.shape[1]} Sa={X_a.shape[1]}")
+
+        # ============================================================
+        # [KEPT] Call underlying VACLVA
+        # ============================================================
         vacl_out = self.vacl(
-            X_v_bds,
-            X_a_bds,
-            return_intermediates=self.return_intermediates,
+            X_v=X_v,
+            X_a=X_a,
+            # compute_infonce=bool(compute_infonce),
+            return_intermediates=bool(return_intermediates),
+            **kwargs,
         )
 
-        X_va = vacl_out["X_va"]  # (B, d_v + d_a, S)
+        # ============================================================
+        # [ADDED] Standardize output dict
+        # ============================================================
+        if not isinstance(vacl_out, dict):
+            # If your VACLVA returns just a loss tensor, wrap it
+            if isinstance(vacl_out, torch.Tensor):
+                return {"loss_vacl": vacl_out, "loss": vacl_out}
+            raise TypeError(f"VACLVA returned unexpected type: {type(vacl_out)}")
 
-        z = self._pool_temporal(X_va)  # (B, d_v + d_a)
-        proj = self.proj(z)            # (B, out_dim)
+        out: Dict[str, Any] = dict(vacl_out)
 
-        if not return_dict:
-            return proj
+        # [ADDED] Normalize loss key
+        loss = out.get("L_cor", out.get("loss", None))
+        if loss is None:
+            # Some implementations use "loss_total"
+            loss = out.get("loss_total", None)
+        if loss is None:
+            raise KeyError(
+                "VACLVA output dict did not contain a loss key among "
+                "['loss_vacl','loss','loss_total']"
+            )
 
-        out = dict(vacl_out)
-        out["z"] = z
-        out["proj"] = proj
+        out["loss_vacl"] = loss
+        out["loss"] = loss  # alias, useful for generic callers
+
+        # ============================================================
+        # [ADDED] Strip heavy intermediates by default (memory-friendly)
+        # ============================================================
+        if self.cfg.strip_intermediates and not return_intermediates:
+            # Common heavy keys seen in VACL-style implementations
+            for k in [
+                "M_v", "M_a", "J_va", "J_av",
+                "attn", "attn_weights",
+                "pos_mask", "neg_mask",
+                "logits", "logits_va", "logits_av",
+                "intermediates",
+            ]:
+                out.pop(k, None)
+
         return out

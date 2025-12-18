@@ -27,7 +27,7 @@ def parse_args():
     parser.add_argument("--config", type=str, required=True,
                         help="Path to TOML config (e.g. configs/batfd_plus_lavdf.toml)")
     parser.add_argument("--data_root", type=str, required=True,
-                        help="Root path to LAV-DF data directory")
+                        help="Root path to LAV_DF data directory")
 
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--num_workers", type=int, default=8)
@@ -139,7 +139,7 @@ def main():
     #     raise ValueError(f"Invalid model_type in config: {model_type}")
 
     # ------------------------------------------------------------------
-    # 4) DataModule for LAV-DF
+    # 4) DataModule for LAV_DF
     # ------------------------------------------------------------------
     if dataset_name.lower() != "lavdf":
         raise ValueError(f"Unsupported dataset: {dataset_name} (expected 'lavdf')")

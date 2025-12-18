@@ -3,7 +3,7 @@
 import torch
 from torch import nn
 
-# ⬇️ Adapt this import to the actual path in LAV-DF
+# ⬇️ Adapt this import to the actual path in LAV_DF
 # e.g. from model.batfd_plus import BatfdPlus
 from model.batfd_plus import BatfdPlus  # <-- adjust if needed
 
@@ -50,7 +50,7 @@ class BatfdPlusPRBExtractor(nn.Module):
             raise AttributeError(
                 "Expected self.model.boundary_module to exist. "
                 "Please adapt BatfdPlusPRBExtractor to the actual attribute "
-                "name used for the PRB / boundary module in the LAV-DF repo."
+                "name used for the PRB / boundary module in the LAV_DF repo."
             )
 
         def make_hook(name):
@@ -73,10 +73,10 @@ class BatfdPlusPRBExtractor(nn.Module):
     def print_temporal_setup(self):
         """
         Print to terminal what temporal length T the model expects,
-        and how LAV-DF does sampling, according to the paper/config.
+        and how LAV_DF does sampling, according to the paper/config.
         """
 
-        print("\n=== [BA-TFD+] Temporal Setup (LAV-DF) ===")
+        print("\n=== [BA-TFD+] Temporal Setup (LAV_DF) ===")
         # From paper + repo defaults: video padded/cropped to 512 frames,
         # audio mel-spec 64×2048 reshaped with τ = 4 -> 512 steps. :contentReference[oaicite:1]{index=1}
         print("* Default temporal length T          : 512")
@@ -148,7 +148,7 @@ class BatfdPlusPRBExtractor(nn.Module):
 #     #   from dataset.lavdf_dataset import LAVDFDataset
 #     #   ds = LAVDFDataset(root=..., split="test", ...)
 #     #   return DataLoader(ds, batch_size=1, ...)
-#     raise NotImplementedError("Hook in the actual LAV-DF dataloader here.")
+#     raise NotImplementedError("Hook in the actual LAV_DF dataloader here.")
 #
 #
 # def main():

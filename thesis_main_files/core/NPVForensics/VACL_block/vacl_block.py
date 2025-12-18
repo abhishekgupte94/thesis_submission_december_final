@@ -47,7 +47,7 @@ class VACLVA(nn.Module):
     def __init__(
         self,
         d_v: int,
-        d_a: int,
+        d_a: int ,
         seq_len: int,
         k: int,
         mu: float = 0.5,
@@ -234,8 +234,8 @@ class VACLVA(nn.Module):
 
         out: Dict[str, torch.Tensor] = {
             "X_va": X_va,
-            "L_cor": L_cor,
-            "Loss_va": Loss_va,
+            "L_cor": L_cor
+            # "Loss_va": Loss_va,
         }
 
         if return_intermediates:

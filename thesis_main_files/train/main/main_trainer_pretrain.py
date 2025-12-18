@@ -1,317 +1,229 @@
-#!/usr/bin/env python
-"""
-train_av_pretrain.py
-====================
+# thesis_main_files/train/train_stage1.py
+# ============================================================
+# [FINAL MAIN TRAIN SCRIPT]
+#
+# - Anchors paths to thesis_main_files/ (REPO_ROOT)
+# - Uses TensorBoardLogger for train/val curves
+# - Uses SegmentDataModule with val_split=0.05
+# - Builds:
+#     Swin3D wrapper (video)
+#     Swin2D wrapper (audio)
+#     AVPretrainArchitecture
+#     AVPretrainSystem
+# - Runs Lightning Trainer with DDP
+# ============================================================
 
-Main training script for the AV pretraining system:
-
-    - Uses AVSegmentTokenDataModule to load **tokenised** segments from offline .pt files.
-    - Builds the architecture:
-        * Swin backbone (video/audio feature extractor)
-        * Positional encoder / pre-architecture wrapper
-        * VACLProjectionHead (Module A)
-        * FaceAudioCommonSpaceWrapper (Module B / EC head)
-    - Wraps everything in AVPretrainSystem (LightningModule).
-    - Trains with PyTorch Lightning on single- or multi-GPU (e.g., 8× A100).
-
-You will likely need to adjust the following:
-
-    1) Imports for your Swin backbone + AV wrapper (see "MODEL IMPORTS" section).
-    2) Feature dims (d_v, d_a, seq_len, etc.) in the config block.
-    3) Index JSON path and data root.
-
-The rest is plug-and-play.
-"""
+from __future__ import annotations
 
 import argparse
-import os
+from pathlib import Path
 
 import torch
-import pytorch_lightning as pl
-from pytorch_lightning.loggers import TensorBoardLogger
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
+import lightning as pl
+from lightning.pytorch.loggers import TensorBoardLogger
 
-# -------------------------------
-# MODEL IMPORTS (ADJUST THESE)
-# -------------------------------
 
-# Core architecture + Lightning system
-from core.training_systems.architectures.pretrain_architecture import AVPretrainArchitecture, ArchitectureConfig
+# ============================================================
+# [ADDED] Repo root anchor:
+# this file lives at thesis_main_files/train/train_stage1.py
+# so parents[1] == thesis_main_files/
+# ============================================================
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+# ============================================================
+# [EXISTING IMPORTS] Your project modules
+# (Adjust import paths only if your repo differs)
+# ============================================================
+from scripts.dataloaders.dataloader import SegmentDataModule  # patched dataloader with val_split
+from core.training_systems.architectures.pretrain_architecture  import AVPretrainArchitecture, ArchitectureConfig
 from core.training_systems.training_systems.system_pretrain import AVPretrainSystem
 
-# VACL + CPE modules
-from core.NPVForensics.VACL_block.main.vacl_wrapper import VACLProjectionHead
-from core.NPVForensics.common_projection.main.common_projection_head_module_wrapper import FaceAudioCommonSpaceWrapper
-
-# DataModule for tokenised AV segments
-from scripts.dataloaders.dataloader import AVSegmentTokenDataModule
-
-# TODO [YOU]: adjust these imports to match your actual Swin/Positional wrapper:
-# Example possibilities (you will know the real names):
-# from swin_backbone_wrapper import build_swin_backbone
-# from main_preprocessing_block import AVWrapper
-#
-# For now, we'll assume you have:
-#   - a function `build_swin_backbone(args)` that returns a nn.Module
-#   - an AV wrapper class `MainAVWrapper` that takes no args or some args
-#
-# Replace the lines below with your actual implementations.
-from typing import Tuple
-import torch.nn as nn
+from scripts.feature_extraction.SWIN.main.MAIN_swin2d_wrapper import Swin2DAudioBackboneWrapper, Swin2DAudioWrapperConfig
+from scripts.feature_extraction.SWIN.main.MAIN_swin_3d_wrapper import VideoBackboneSwin3D
+from scripts.feature_extraction.SWIN.main.build_swin3d import BuildSwin3DConfig
 
 
-def build_swin_backbone_stub(d_model: int) -> nn.Module:
-    """
-    [TODO YOU] Replace this stub with your actual Swin backbone builder.
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser()
 
-    It should:
-        - Take configuration (e.g. d_model, patch size, depth, etc.)
-        - Return an nn.Module that consumes the batch dict prepared by your
-          AV wrapper and outputs modality-specific features needed by VACL/CPE.
+    # ------------------------------------------------------------
+    # Data / paths (all are RELATIVE to thesis_main_files/)
+    # ------------------------------------------------------------
+    p.add_argument("--offline-root", type=str, required=True,
+                   help="Path under thesis_main_files/ to offline tensors root (e.g. data/processed/.../AVSpeech_offline_training_files)")
+    p.add_argument("--batch-name", type=str, required=True,
+                   help="Name of the batch folder under offline-root (e.g. avspeech_video_stage1)")
 
-    For now this is a dummy identity module so the script is syntactically valid.
-    """
-    class IdentityBackbone(nn.Module):
-        def forward(self, batch):
-            # Expect that batch already has "audio_tokens" and "video_tokens"
-            # shaped as (B, Sa, D_a) and (B, Sv, D_v) and simply return them.
-            return {
-                "audio_features": batch["audio_tokens"].transpose(1, 2),  # (B, D_a, Sa)
-                "video_features": batch["video_tokens"].transpose(1, 2),  # (B, D_v, Sv)
-            }
+    # ------------------------------------------------------------
+    # Training knobs
+    # ------------------------------------------------------------
+    p.add_argument("--devices", type=int, default=8)
+    p.add_argument("--max-epochs", type=int, default=5)
+    p.add_argument("--batch-size", type=int, default=2, help="Per-GPU batch size")
+    p.add_argument("--bucket-size", type=int, default=8, help="Bucket width in frames for T_video bucketing")
+    p.add_argument("--num-workers", type=int, default=8)
 
-    return IdentityBackbone()
+    p.add_argument("--lr", type=float, default=1e-4)
+    p.add_argument("--weight-decay", type=float, default=1e-2)
 
+    # ------------------------------------------------------------
+    # Precision (A100 recommended: bf16-mixed)
+    # ------------------------------------------------------------
+    p.add_argument("--precision", type=str, default="bf16-mixed",
+                   choices=["32-true", "16-mixed", "bf16-mixed"])
 
-class MainAVWrapperStub(nn.Module):
-    """
-    [TODO YOU] Replace this stub with your actual pre-architecture wrapper.
+    # ------------------------------------------------------------
+    # Validation split (we lock this to 0.05 as requested,
+    # but still keep it configurable for experiments)
+    # ------------------------------------------------------------
+    p.add_argument("--val-split", type=float, default=0.05)
 
-    In your real code this logic likely lives in `main_preprocessing_block.py`
-    and does things like:
-        - token alignment,
-        - positional embedding,
-        - modality-specific reshaping before Swin.
+    # ------------------------------------------------------------
+    # Optional profiling toggles
+    # ------------------------------------------------------------
+    p.add_argument("--enable-energy-tracking", action="store_true",
+                   help="Enable CodeCarbon tracking (rank0 only). Requires: pip install codecarbon")
+    p.add_argument("--enable-flops-profile", action="store_true",
+                   help="Enable fvcore FLOPs profile (rank0 only). Requires: pip install fvcore")
 
-    Here we just pass through the batch dict unchanged.
-    """
+    # ------------------------------------------------------------
+    # Logging / output
+    # ------------------------------------------------------------
+    p.add_argument("--tb-logdir", type=str, default="tb_logs",
+                   help="TensorBoard log dir under thesis_main_files/")
+    p.add_argument("--run-name", type=str, default="stage1_ssl",
+                   help="TensorBoard run name")
 
-    def forward(self, batch):
-        # In the real implementation you might:
-        #   - read batch["audio_tokens"], batch["video_tokens"]
-        #   - add positional encodings
-        #   - reshape to (B, C, T, H, W) or similar for Swin
-        # For now, we just return the batch as "inputs" for the backbone stub.
-        return batch
-
-
-# ----------------------------------
-# CONFIG HELPERS
-# ----------------------------------
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="Train AV pretraining system")
-
-    # Data
-    parser.add_argument("--index_json", type=str, required=True,
-                        help="Path to index JSON for AVSegmentTokensDataset")
-    parser.add_argument("--data_root", type=str, default=None,
-                        help="Optional root dir to prepend to paths in index JSON")
-    parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--num_workers", type=int, default=8)
-
-    # Model / feature dims (YOU MUST SET THESE CORRECTLY)
-    parser.add_argument("--d_a", type=int, default=256,
-                        help="Audio feature dim after Swin/positional encoder")
-    parser.add_argument("--d_v", type=int, default=256,
-                        help="Video feature dim after Swin/positional encoder")
-    parser.add_argument("--seq_len", type=int, default=16,
-                        help="Sequence length S for VACL")
-    parser.add_argument("--vacl_k", type=int, default=128,
-                        help="Hidden size k inside VACLVA")
-    parser.add_argument("--proj_out_dim", type=int, default=256,
-                        help="VACL projection head output dim (fed to downstream modules)")
-    parser.add_argument("--fa_common_dim", type=int, default=256,
-                        help="Common space dimension d_fa for Face-Audio CPE")
-
-    # Loss weights
-    parser.add_argument("--lambda_vacl", type=float, default=1.0)
-    parser.add_argument("--lambda_cpe", type=float, default=1.0)
-
-    # Optim / training
-    parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--weight_decay", type=float, default=1e-2)
-    parser.add_argument("--max_epochs", type=int, default=50)
-    parser.add_argument("--precision", type=str, default="16-mixed",
-                        choices=["32", "16-mixed", "bf16-mixed"])
-    parser.add_argument("--use_plateau_scheduler", action="store_true", default=True)
-
-    # Logging / checkpointing
-    parser.add_argument("--log_dir", type=str, default="logs_av_pretrain")
-    parser.add_argument("--default_root_dir", type=str, default="checkpoints_av_pretrain")
-    parser.add_argument("--experiment_name", type=str, default="av_pretrain_run")
-
-    # Hardware
-    parser.add_argument("--devices", type=str, default="auto",
-                        help='Number of GPUs, "auto", or list like "0,1,2,3"')
-    parser.add_argument("--strategy", type=str, default="ddp_find_unused_parameters_false")
-    parser.add_argument("--seed", type=int, default=42)
-
-    return parser.parse_args()
+    return p.parse_args()
 
 
-# ----------------------------------
-# MODEL BUILDING
-# ----------------------------------
-
-
-def build_architecture(args) -> AVPretrainArchitecture:
-    """
-    Build the full AVPretrainArchitecture from submodules.
-
-    This function assumes:
-      - AVSegmentTokenDataModule produces batches with keys:
-          "audio_tokens": (B, Sa, D_a)
-          "video_tokens": (B, Sv, D_v)
-      - MainAVWrapper (your real wrapper) takes the raw batch and prepares
-        inputs for the Swin backbone.
-      - Swin backbone returns dict with:
-          "audio_features": (B, D_a, S)
-          "video_features": (B, D_v, S)
-      - VACLProjectionHead consumes those features (layout handled internally).
-      - FaceAudioCommonSpaceWrapper consumes pooled or per-frame embeddings
-        from the same feature space (you can plug this into your architecture).
-    """
-    # [1] Build your AV wrapper (positional encoding / pre-architecture logic)
-    # TODO YOU: replace MainAVWrapperStub with your real class.
-    av_wrapper = MainAVWrapperStub()
-
-    # [2] Build your Swin backbone
-    # TODO YOU: replace build_swin_backbone_stub with your actual builder.
-    swin_backbone = build_swin_backbone_stub(d_model=args.d_v)
-
-    # [3] Build VACL projection head (Module A)
-    module_a = VACLProjectionHead(
-        d_v=args.d_v,
-        d_a=args.d_a,
-        seq_len=args.seq_len,
-        k=args.vacl_k,
-        out_dim=args.proj_out_dim,
-        mu=0.5,
-        input_layout="bds",  # or "bsd" depending on your Swin output; adjust as needed
-        pool="mean",
-    )
-
-    # [4] Build Face-Audio common space wrapper (Module B)
-    # Here we assume the common space dimension equals proj_out_dim,
-    # but you can adjust as needed.
-    module_b = FaceAudioCommonSpaceWrapper(
-        d_a=args.d_a,
-        d_f=args.d_v,
-        d_fa=args.fa_common_dim,
-        temperature=0.1,
-        loss_weight=1.0,
-    )
-
-    # [5] Architecture-level config (optional but useful)
-    arch_cfg = ArchitectureConfig(
-        vacl_weight=args.lambda_vacl,
-        ec_weight=args.lambda_cpe,
-        enable_vacl=True,
-        enable_ec=True,
-        freeze_swin=False,
-    )
-
-    # [6] Build the high-level architecture
-    arch = AVPretrainArchitecture(
-        av_wrapper=av_wrapper,
-        swin_backbone=swin_backbone,
-        module_a=module_a,
-        module_b=module_b,
-        cfg=arch_cfg,
-    )
-
-    return arch
-
-
-def build_system(args) -> AVPretrainSystem:
-    """
-    Wrap the architecture in AVPretrainSystem (LightningModule).
-    """
-    arch = build_architecture(args)
-
-    system = AVPretrainSystem(
-        architecture=arch,
-        lr=args.lr,
-        weight_decay=args.weight_decay,
-        lambda_vacl=args.lambda_vacl,
-        lambda_cpe=args.lambda_cpe,
-        use_plateau_scheduler=args.use_plateau_scheduler,
-    )
-    return system
-
-
-# ----------------------------------
-# MAIN
-# ----------------------------------
-
-
-def main():
+def main() -> None:
     args = parse_args()
 
-    # Reproducibility
-    pl.seed_everything(args.seed, workers=True)
+    # ============================================================
+    # [ADDED] A100 performance hint
+    # ============================================================
+    torch.set_float32_matmul_precision("high")
 
-    # DataModule for tokenised AV segments
-    datamodule = AVSegmentTokenDataModule(
-        index_json_path=args.index_json,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        root_dir=args.data_root,
-        drop_last=True,
-    )
+    # ============================================================
+    # [ADDED] Resolve repo-relative paths safely
+    # ============================================================
+    offline_root = (REPO_ROOT / args.offline_root).resolve()
+    tb_logdir = (REPO_ROOT / args.tb_logdir).resolve()
+    tb_logdir.mkdir(parents=True, exist_ok=True)
 
-    # Build model
-    system = build_system(args)
-
-    # Logger & callbacks
+    # ============================================================
+    # [ADDED] TensorBoard logger
+    # (Lightning will write train/* and val/* from self.log calls)
+    # ============================================================
     logger = TensorBoardLogger(
-        save_dir=args.log_dir,
-        name=args.experiment_name,
+        save_dir=str(tb_logdir),
+        name=args.run_name,
     )
 
-    checkpoint_cb = ModelCheckpoint(
-        dirpath=args.default_root_dir,
-        filename="{epoch:02d}-{val_loss:.4f}",
-        save_top_k=3,
-        monitor="val/loss",
-        mode="min",
-        save_last=True,
+    # ============================================================
+    # [PATCHED] DataModule (val_split=0.05)
+    # ============================================================
+    dm = SegmentDataModule(
+        offline_root=offline_root,
+        batch_name=args.batch_name,
+        batch_size=args.batch_size,
+        bucket_size=args.bucket_size,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        persistent_workers=True,
+        drop_last=True,
+        map_location="cpu",
+        seed=123,
+        val_split=float(args.val_split),  # <- 0.05 per your request
+        val_batch_size=args.batch_size,   # same per-GPU size for val
     )
 
-    lr_monitor = LearningRateMonitor(logging_interval="step")
+    # ============================================================
+    # [PATCHED] Build backbones (wrappers call external repos)
+    # ============================================================
 
-    # Trainer
+    # -------------------
+    # Swin2D (audio)
+    # -------------------
+    audio_backbone = Swin2DAudioBackboneWrapper(
+        Swin2DAudioWrapperConfig(
+            # Keep defaults from wrapper unless you need overrides
+        )
+    )
+
+    # -------------------
+    # Swin3D (video)
+    # -------------------
+    swin3d_cfg = BuildSwin3DConfig(
+        # IMPORTANT: these fields must match your BuildSwin3DConfig dataclass.
+        # Fill any required fields that your builder expects.
+        out="5d",
+        use_checkpoint=True,  # [RECOMMENDED] big activation memory saver
+        # pretrained=..., pretrained2d=..., etc if required by your builder
+    )
+    video_backbone = VideoBackboneSwin3D(swin3d_cfg)
+
+    # ============================================================
+    # [PATCHED] Build architecture
+    # ============================================================
+    arch_cfg = ArchitectureConfig(
+        vacl_s_out=64,
+        vacl_d_v=256,
+        vacl_d_a=768,
+        compute_infonce=True,
+        return_intermediates=False,
+        lambda_vacl=1.0,
+        lambda_cpe=1.0,
+    )
+
+    model = AVPretrainArchitecture(
+        cfg=arch_cfg,
+        video_backbone=video_backbone,
+        audio_backbone=audio_backbone,
+        c_v_in=256,
+        c_a_in=768,
+    )
+
+    # ============================================================
+    # [PATCHED] Lightning system (train/val logging inside)
+    # ============================================================
+    system = AVPretrainSystem(
+        model=model,
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        lambda_vacl=1.0,
+        lambda_cpe=1.0,
+        enable_energy_tracking=args.enable_energy_tracking,
+        enable_flops_profile=args.enable_flops_profile,
+    )
+
+    # ============================================================
+    # [ADDED] Configure checkpoint saving location under thesis_main_files/
+    # ============================================================
+    system.save_dir = str((REPO_ROOT / "checkpoints").resolve())
+    system.save_every_n_epochs = 1
+    system.save_weights_only = True
+
+    # ============================================================
+    # [ADDED] Trainer
+    # ============================================================
     trainer = pl.Trainer(
-        accelerator="gpu" if torch.cuda.is_available() else "cpu",
+        accelerator="gpu",
         devices=args.devices,
-        strategy=args.strategy if torch.cuda.is_available() else None,
+        strategy="ddp",
         precision=args.precision,
         max_epochs=args.max_epochs,
         logger=logger,
-        callbacks=[checkpoint_cb, lr_monitor],
-        default_root_dir=args.default_root_dir,
-        log_every_n_steps=50,
+        check_val_every_n_epoch=1,   # [ADDED] ensures val loss is produced
+        log_every_n_steps=10,
+        enable_checkpointing=True,
     )
 
-    # Fit
-    trainer.fit(system, datamodule=datamodule)
-
-    # Optional: test best checkpoint
-    if args.default_root_dir is not None:
-        print("Training finished. You can run `trainer.test` later with the best checkpoint.")
+    trainer.fit(system, datamodule=dm)
 
 
 if __name__ == "__main__":
     main()
+

@@ -5,8 +5,8 @@ import pandas as pd
 # === Paths ===
 metadata_path = "/thesis_main_files/data/metadata/lav-df/metadata.json"
 
-source_test_dir = "/Users/abhishekgupte_macbookpro/Downloads/Datasets/LAV-DF/test"
-source_dev_dir = "/Users/abhishekgupte_macbookpro/Downloads/Datasets/LAV-DF/dev"
+source_test_dir = "/Users/abhishekgupte_macbookpro/Downloads/Datasets/LAV_DF/test"
+source_dev_dir = "/Users/abhishekgupte_macbookpro/Downloads/Datasets/LAV_DF/dev"
 
 destination_test_dir = "/thesis_main_files/data/processed_files/lav_df/test"
 destination_dev_dir = "/thesis_main_files/data/processed_files/lav_df/dev"

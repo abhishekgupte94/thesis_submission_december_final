@@ -113,9 +113,9 @@ class BuildSwin2DConfig:
     # Note: we also default IMG_SIZE to 224x224 to match the tiny config name.
     # For audio, the sanity script will resize a log-mel image to (224,224).
     # ----------------------------------------------------------------------------------
-    img_size: Tuple[int, int] = (64, 96)
-    in_chans: int = 1
-    embed_dim: int = 128
+    img_size: Tuple[int, int] = (224,224)
+    in_chans: int = 3
+    embed_dim: int = 96
 
     # Optional overrides (if you don’t want to rely on YAML for these)
     # [MODIFIED] Defaults set to tiny; still overridable if you pass explicit args.
@@ -163,20 +163,42 @@ class Swin2DTokenAdapter(nn.Module):
         super().__init__()
         self.backbone = backbone
 
-    def forward_features(self, x: torch.Tensor) -> torch.Tensor:
-        # >>> ADDED: convert log-mel to Swin-friendly input (steps 1–3 + channel replication)
+    def forward_features(self, x):
+        # print("[A] raw mel  in:", tuple(x.shape), x.dtype, x.device)
+
         x = mel_b1_64x96_to_swin_input(
             x,
             out_hw=(224, 224),
-            to_3ch=True,               # keep vanilla Swin patch embed unchanged (expects 3)
+            to_3ch=True,
             normalize="per_sample",
             pad_value="min",
             time_align="left",
         )
-        # <<< ADDED
+        # print("[B] swin image in:", tuple(x.shape), x.dtype, x.device)
 
-        tokens = self.backbone.forward_features(x)  # (B, L, C)
+        tokens = self.backbone.forward_features(x)
         return tokens
+        # # Some impls return dict/tuple; handle both
+        # if isinstance(tokens, torch.Tensor):
+        #     # print("[C] swin features:", tuple(tokens.shape))
+        #     return tokens
+        #
+        # if isinstance(tokens, dict):
+        #     for k, v in tokens.items():
+        #         if isinstance(v, torch.Tensor):
+        #             print(f"[C] swin features dict[{k}]:", tuple(v.shape))
+        #     # return the first tensor value
+        #     for v in tokens.values():
+        #         if isinstance(v, torch.Tensor):
+        #             return v
+        #
+        # if isinstance(tokens, (tuple, list)):
+        #     for i, v in enumerate(tokens):
+        #         if isinstance(v, torch.Tensor):
+        #             print(f"[C] swin features tuple[{i}]:", tuple(v.shape))
+        #             return v
+
+        # raise RuntimeError(f"Swin forward_features returned non-tensor: {type(tokens)}")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.forward_features(x)
