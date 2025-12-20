@@ -115,7 +115,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     REPO_ROOT = Path(__file__).resolve().parents[2]
-    print(f"{REPO_ROOT} is the root dir")
+    print(f"{REPO_ROOT} is the repo root dir")
     # Build the target root directory under thesis_main_files/
     root_dir = (REPO_ROOT / "data" / "processed" / args.base_subdir / args.file_root).resolve()
     print(f"{root_dir} is the root dir")
