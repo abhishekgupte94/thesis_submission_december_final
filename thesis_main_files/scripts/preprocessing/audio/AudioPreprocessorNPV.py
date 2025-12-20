@@ -24,103 +24,110 @@ def _to_rel_data_path(path: Path) -> str:
     project_root = _get_project_root()
     try:
         rel = path.resolve().relative_to(project_root)
-        return rel.as_posix()
     except Exception:
-        return path.as_posix()
+        rel = path.resolve()
+    return rel.as_posix()
 
 
 def build_segments_from_word_times(
     word_times: Sequence[Sequence[float]],
+    *,
     target_clip_duration: float,
     min_factor: float = 0.5,
     max_factor: float = 1.5,
 ) -> List[Tuple[float, float]]:
-    if not word_times:
-        return []
+    """
+    Convert word time-stamps into segment windows.
+    """
+    if target_clip_duration <= 0:
+        raise ValueError("target_clip_duration must be > 0")
 
-    segments: List[Tuple[float, float]] = [(float(s), float(e)) for s, e in word_times]
+    segments: List[Tuple[float, float]] = []
+    for w in word_times:
+        if len(w) < 3:
+            continue
+        _, start, end = w[0], float(w[1]), float(w[2])
+        if end < start:
+            continue
 
-    def duration(seg: Tuple[float, float]) -> float:
-        return seg[1] - seg[0]
+        dur = end - start
+        # Clamp duration based on factors
+        lo = dur * min_factor
+        hi = dur * max_factor
+        seg_dur = max(lo, min(hi, target_clip_duration))
 
-    merged: List[Tuple[float, float]] = []
-    current = segments[0]
-    for s, e in segments[1:]:
-        if duration(current) < min_factor * target_clip_duration:
-            current = (current[0], e)
-        else:
-            merged.append(current)
-            current = (s, e)
-    merged.append(current)
-
-    final_segments: List[Tuple[float, float]] = []
-    for s, e in merged:
-        d = e - s
-        if d <= max_factor * target_clip_duration:
-            final_segments.append((s, e))
-        else:
-            n_chunks = max(int(round(d / target_clip_duration)), 1)
-            chunk_dur = d / n_chunks
-            for i in range(n_chunks):
-                cs = s + i * chunk_dur
-                ce = min(e, cs + chunk_dur)
-                if ce > cs:
-                    final_segments.append((cs, ce))
-
-    return final_segments
+        seg_start = start
+        seg_end = min(seg_start + seg_dur, end if end > seg_start else seg_start + seg_dur)
+        if seg_end <= seg_start:
+            continue
+        segments.append((seg_start, seg_end))
+    return segments
 
 
 @dataclass
-class AudioPreprocessorConfig:
-    target_sr: int = 16_000
+class AudioPreprocessorNPVConfig:
+    target_sr: int = 16000
+    n_mels: int = 64
     n_fft: int = 400
     hop_length: int = 160
-    n_mels: int = 64
+    win_length: int = 400
+    f_min: float = 0.0
+    f_max: Optional[float] = None
+    eps: float = 1e-10
     target_num_frames: int = 96
-    eps: float = 1e-6
     normalize_utterance: bool = True
 
 
 class AudioPreprocessorNPV:
-    def __init__(self, cfg: Optional[AudioPreprocessorConfig] = None) -> None:
-        self.cfg = cfg or AudioPreprocessorConfig()
-
-        self.target_sr = self.cfg.target_sr
-        self.n_fft = self.cfg.n_fft
-        self.hop_length = self.cfg.hop_length
-        self.n_mels = self.cfg.n_mels
-        self.target_num_frames = self.cfg.target_num_frames
-        self.eps = self.cfg.eps
-        self.normalize_utterance = self.cfg.normalize_utterance
+    def __init__(self, cfg: AudioPreprocessorNPVConfig) -> None:
+        self.cfg = cfg
+        self.target_sr = int(cfg.target_sr)
+        self.n_mels = int(cfg.n_mels)
+        self.n_fft = int(cfg.n_fft)
+        self.hop_length = int(cfg.hop_length)
+        self.win_length = int(cfg.win_length)
+        self.f_min = float(cfg.f_min)
+        self.f_max = cfg.f_max
+        self.eps = float(cfg.eps)
+        self.target_num_frames = int(cfg.target_num_frames)
+        self.normalize_utterance = bool(cfg.normalize_utterance)
 
         self.mel_spectrogram = torchaudio.transforms.MelSpectrogram(
             sample_rate=self.target_sr,
             n_fft=self.n_fft,
             hop_length=self.hop_length,
+            win_length=self.win_length,
             n_mels=self.n_mels,
-            center=True,
+            f_min=self.f_min,
+            f_max=self.f_max,
             power=2.0,
+            center=True,
+            pad_mode="reflect",
+            norm=None,
+            mel_scale="htk",
         )
 
     def _load_audio_file(self, path: Union[str, Path]) -> Tuple[Tensor, int]:
+        path = Path(path)
         wav, sr = torchaudio.load(str(path))
-        return wav, sr
+        # Convert to mono if needed
+        if wav.ndim == 2 and wav.size(0) > 1:
+            wav = wav.mean(dim=0, keepdim=True)
+        if wav.ndim == 2:
+            wav = wav.squeeze(0)
+        return wav, int(sr)
 
     def _standardize_waveform(self, wav: Tensor, sr: int) -> Tensor:
-        if wav.dim() == 2 and wav.size(0) > 1:
-            wav = wav.mean(dim=0, keepdim=True)
-        elif wav.dim() == 1:
-            wav = wav.unsqueeze(0)
+        # Resample if needed
+        if int(sr) != self.target_sr:
+            wav = torchaudio.functional.resample(wav, sr, self.target_sr)
 
-        if sr != self.target_sr:
-            wav = torchaudio.functional.resample(wav, orig_freq=sr, new_freq=self.target_sr)
-
+        # Normalize peak
         if self.normalize_utterance:
             peak = wav.abs().max()
             if peak > 0:
                 wav = wav / peak
-
-        return wav.squeeze(0)
+        return wav
 
     def _waveform_to_logmel(self, wav: Tensor) -> Tensor:
         mel = self.mel_spectrogram(wav)
@@ -129,6 +136,35 @@ class AudioPreprocessorNPV:
 
         T = mel.size(1)
         target_T = self.target_num_frames
+
+        if T == target_T:
+            return mel
+        if T > target_T:
+            start = (T - target_T) // 2
+            mel = mel[:, start : start + target_T]
+        else:
+            pad_T = target_T - T
+            pad = torch.zeros(self.n_mels, pad_T, dtype=mel.dtype)
+            mel = torch.cat([mel, pad], dim=1)
+        return mel
+
+
+    # ============================================================
+    # [ADDED] 64x2048 log-Mel creation (paper-style long context)
+    #
+    # CRITICAL REQUIREMENTS (per your instructions):
+    #   - DO NOT change any existing wiring/logic.
+    #   - Follow the EXACT same methodology as _waveform_to_logmel()
+    #     (mel_spectrogram -> clamp -> log -> center-crop or zero-pad).
+    #   - Only difference is target_T = 2048.
+    # ============================================================
+    def _waveform_to_logmel_2048(self, wav: Tensor) -> Tensor:
+        mel = self.mel_spectrogram(wav)
+        mel = torch.clamp(mel, min=self.eps)
+        mel = torch.log(mel)
+
+        T = mel.size(1)
+        target_T = 2048  # [ADDED] fixed long-context time dimension
 
         if T == target_T:
             return mel
@@ -174,27 +210,19 @@ class AudioPreprocessorNPV:
         target_clip_duration: float,
         min_factor: float = 0.5,
         max_factor: float = 1.5,
-        return_segments: bool = False,
-    ):
+    ) -> Tuple[List[Tensor], List[Tuple[float, float]]]:
         wav, sr = self._load_audio_file(path)
         wav = self._standardize_waveform(wav, sr)
 
-        segments_sec = build_segments_from_word_times(
-            word_times=word_times,
+        segments = build_segments_from_word_times(
+            word_times,
             target_clip_duration=target_clip_duration,
             min_factor=min_factor,
             max_factor=max_factor,
         )
-
-        if not segments_sec:
-            mel_stack = torch.empty(0, self.n_mels, self.target_num_frames)
-            return (mel_stack, []) if return_segments else mel_stack
-
-        clips = self.slice_waveform_with_segments(wav, segments_sec)
-        mel_list: List[Tensor] = [self._waveform_to_logmel(clip) for clip in clips]
-
-        mel_stack = torch.stack(mel_list, dim=0) if mel_list else torch.empty(0, self.n_mels, self.target_num_frames)
-        return (mel_stack, segments_sec) if return_segments else mel_stack
+        clips = self.slice_waveform_with_segments(wav, segments)
+        mel_segments: List[Tensor] = [self._waveform_to_logmel(c) for c in clips]
+        return mel_segments, segments
 
     def process_file_with_word_segments_segmentlocal(
         self,
@@ -203,31 +231,15 @@ class AudioPreprocessorNPV:
         min_factor: float = 0.5,
         max_factor: float = 1.5,
     ) -> Tuple[List[Tensor], List[Tuple[float, float]]]:
-        if not word_times:
-            return [], []
-
-        target_clip_duration = (self.cfg.target_num_frames * self.cfg.hop_length / self.cfg.target_sr)
-
-        mel_stack, segments = self.process_file_with_word_segments(
+        target_clip_duration = float(self.target_num_frames) * float(self.hop_length) / float(self.target_sr)
+        return self.process_file_with_word_segments(
             path=path,
             word_times=word_times,
             target_clip_duration=target_clip_duration,
             min_factor=min_factor,
             max_factor=max_factor,
-            return_segments=True,
         )
 
-        mel_segments: List[Tensor] = [mel_stack[i] for i in range(mel_stack.shape[0])]
-        return mel_segments, segments
-
-    # ==================================================================
-    # [ADDED] NEW: segment-driven API (NO segmentation logic inside audio)
-    #
-    # This is the exact path you want:
-    # - Offline trainer loads video .pt for clip_id
-    # - Reads segments_sec from that .pt
-    # - Calls this method so audio slicing matches video exactly
-    # ==================================================================
     def process_and_save_from_segments_sec_segmentlocal(
             self,
             audio_path: Union[str, Path],
@@ -264,6 +276,11 @@ class AudioPreprocessorNPV:
         # ==========================================================
         clips = self.slice_waveform_with_segments(wav, segments_sec)
         mel_segments: List[Tensor] = [self._waveform_to_logmel(c) for c in clips]
+        # ==========================================================
+        # [ADDED] Long-context mel (64x2048) computed from the SAME clips
+        # Reason: preserve exact segmentation + align perfectly with video.
+        # ==========================================================
+        mel_segments_2048: List[Tensor] = [self._waveform_to_logmel_2048(c) for c in clips]
         num_segments = len(mel_segments)
 
         # dtype/shape safety (unchanged)
@@ -277,6 +294,26 @@ class AudioPreprocessorNPV:
             if mel.dtype != torch.float32:
                 mel_segments[idx] = mel.float()
 
+        # ==========================================================
+        # [ADDED] dtype/shape safety for 64x2048 tensors (fail fast)
+        # NOTE: This does NOT alter the existing 64x96 checks above.
+        # ==========================================================
+        for idx, mel in enumerate(mel_segments_2048):
+            if not isinstance(mel, torch.Tensor):
+                raise TypeError(f"mel_segments_2048[{idx}] is not a Tensor (got {type(mel)})")
+            if mel.ndim != 2:
+                raise ValueError(f"Expected mel_segments_2048[{idx}] shape (n_mels, T), got {tuple(mel.shape)}")
+            if mel.shape[0] != self.n_mels:
+                raise ValueError(
+                    f"mel_segments_2048[{idx}].shape[0]={mel.shape[0]} expected {self.n_mels}"
+                )
+            if mel.shape[1] != 2048:
+                raise ValueError(
+                    f"Expected mel_segments_2048[{idx}] time dim 2048, got {mel.shape[1]}"
+                )
+            if mel.dtype != torch.float32:
+                mel_segments_2048[idx] = mel.float()
+
         # [MODIFIED] Directory: out_root/<clip_id>/
         clip_dir = out_root / clip_id_str
         clip_dir.mkdir(parents=True, exist_ok=True)
@@ -289,6 +326,16 @@ class AudioPreprocessorNPV:
                 raise FileExistsError(f"Refusing to overwrite existing file: {out_seg_pt}")
 
             torch.save(mel, out_seg_pt)  # <-- payload is ONLY the Tensor
+
+            # ==========================================================
+            # [ADDED] Save the paired 64x2048 mel tensor next to the 64x96.
+            # Naming: <clip_id>_<seg>__2048.pt (keeps original intact).
+            # ==========================================================
+            out_seg_pt_2048 = clip_dir / f"{clip_id_str}_{seg_idx:04d}__2048.pt"
+            if out_seg_pt_2048.exists() and not overwrite:
+                raise FileExistsError(f"Refusing to overwrite existing file: {out_seg_pt_2048}")
+            torch.save(mel_segments_2048[seg_idx], out_seg_pt_2048)
+
             saved += 1
 
         # Logging
@@ -296,11 +343,13 @@ class AudioPreprocessorNPV:
             log_csv_path = Path(log_csv_path)
             log_csv_path.parent.mkdir(parents=True, exist_ok=True)
             file_exists = log_csv_path.exists()
+
+            pt_rel_path = _to_rel_data_path(clip_dir)
             with log_csv_path.open("a", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
                 if not file_exists:
-                    writer.writerow(["clip_id", "audio_file", "clip_dir", "num_words", "num_segments"])
-                writer.writerow([clip_id_str, audio_path.name, _to_rel_data_path(clip_dir), num_words, saved])
+                    writer.writerow(["audio_file", "pt_rel_path", "num_words", "num_segments"])
+                writer.writerow([audio_path.name, pt_rel_path, num_words, num_segments])
 
         return saved, num_words
 

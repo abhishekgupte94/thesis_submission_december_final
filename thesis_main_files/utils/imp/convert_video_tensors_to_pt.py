@@ -1,6 +1,9 @@
 from __future__ import annotations
+
+import argparse
 from pathlib import Path
 from typing import Optional, Tuple
+
 import torch
 
 
@@ -27,11 +30,7 @@ def export_mp4_segments_to_sibling_video_pt_dir(
         -> .../seg_0001/video_pt/seg_0001.pt
 
     Saves:
-        {
-          "video_uint8_cthw": (3,T,H,W) uint8,
-          "orig_T": int,
-          "src_mp4": str,
-        }
+        torch.save((3,T,H,W) uint8, out_pt)
 
     NO temporal padding, NO sampling.
     """
@@ -47,7 +46,7 @@ def export_mp4_segments_to_sibling_video_pt_dir(
         ) from e
 
     if resize_hw is not None:
-        import torch.nn.functional as F
+        import torch.nn.functional as F  # noqa: F401
 
     mp4s = list(root_dir.rglob("*.mp4"))
     written = 0
@@ -60,39 +59,75 @@ def export_mp4_segments_to_sibling_video_pt_dir(
         if out_pt.exists() and not overwrite:
             continue
 
-        # Decode
         frames, _, _ = read_video(str(mp4_path), pts_unit="sec")  # (T,H,W,C)
         if frames.numel() == 0:
             continue
 
         frames = frames.to(torch.uint8)
-        orig_T = int(frames.shape[0])
 
-        # # Optional resize (spatial only)
-        # if resize_hw is not None:
-        #     Ht, Wt = resize_hw
-        #     x = frames.permute(0, 3, 1, 2).float()  # (T,C,H,W)
-        #     x = F.interpolate(x, size=(Ht, Wt), mode="bilinear", align_corners=False)
-        #     frames = (
-        #         x.round()
-        #          .clamp(0, 255)
-        #          .to(torch.uint8)
-        #          .permute(0, 2, 3, 1)
-        #          .contiguous()
-        #     )
-
-        # payload = {
-        #     "video_uint8_cthw": _to_cthw_uint8(frames),  # (3,T,H,W)
-        #     "orig_T": orig_T,
-        #     "src_mp4": str(mp4_path),
-        # }
-
+        # NOTE: keeping your current behavior: save ONLY the tensor
         torch.save(_to_cthw_uint8(frames), out_pt)
         written += 1
 
+    print(f"[export] root_dir={root_dir}")
     print(f"[export] found={len(mp4s)} mp4s, written={written} pt files")
 
+
 if __name__ == "__main__":
-    # REPO_ROOT = Path(__file__).resolve().parents[1]
-    # export_mp4_segments_to_sibling_video_pt_dir(root_dir = overwrite = True)
-    # file_path  = (REPO_ROOT/"data"/"processed"/"video_files"..../args.file_root).resolve()
+    # =========================================================================
+    # Repo-root relationship ideology (as requested)
+    #
+    # Expectation:
+    # - This file is inside repo somewhere like:
+    #     thesis_main_files/<something>/<this_script>.py
+    # - So parents[1] resolves to thesis_main_files/
+    # =========================================================================
+
+    parser = argparse.ArgumentParser(
+        description="Export *.mp4 segments to sibling video_pt/*.pt next to each segment folder"
+    )
+
+    # This is the *relative* root under the base directory.
+    # Example: "AVSpeech/AVSpeech_offline_training_files/avspeech_video_stage1/video_face_crops"
+    # or "LAVDF/.../video_face_crops"
+    parser.add_argument(
+        "--file_root",
+        type=str,
+        required=True,
+        help="Path RELATIVE to the chosen base directory (e.g. 'AVSpeech/.../video_face_crops').",
+    )
+
+    # Base directory under repo data/processed where file_root lives.
+    # You can keep this default and override per dataset if needed.
+    parser.add_argument(
+        "--base_subdir",
+        type=str,
+        default="video_files",
+        help="Subdirectory under data/processed that contains file_root (default: video_files).",
+    )
+
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing .pt files if they already exist.",
+    )
+
+    args = parser.parse_args()
+
+    REPO_ROOT = Path(__file__).resolve().parents[1]
+
+    # Build the target root directory under thesis_main_files/
+    root_dir = (REPO_ROOT / "data" / "processed" / args.base_subdir / args.file_root).resolve()
+
+    if not root_dir.exists():
+        raise FileNotFoundError(
+            f"[export] Resolved root_dir does not exist:\n"
+            f"  root_dir={root_dir}\n"
+            f"  REPO_ROOT={REPO_ROOT}\n"
+            f"  base_subdir={args.base_subdir}\n"
+            f"  file_root={args.file_root}\n"
+        )
+
+    print(f"[export] REPO_ROOT={REPO_ROOT}")
+    print(f"[export] root_dir={root_dir}")
+    export_mp4_segments_to_sibling_video_pt_dir(root_dir=root_dir, overwrite=args.overwrite)
