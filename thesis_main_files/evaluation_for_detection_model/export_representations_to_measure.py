@@ -23,9 +23,9 @@ import argparse
 from pathlib import Path
 import torch
 
-from dataloader import SegmentDataModule
+from scripts.dataloaders.dataloader   import SegmentDataModule
 from evaluation_for_detection_model.build_model import build_model, load_weights_into_model, BuildModelArgs
-from evaluation_for_detection_model.utils_dist import rank
+from evaluation_for_detection_model.ddp_multi_gpu_prep import rank
 
 
 @torch.no_grad()

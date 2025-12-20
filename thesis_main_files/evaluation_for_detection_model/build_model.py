@@ -1,21 +1,25 @@
-# evaluation_for_detection_model/build_model.py
+
 from __future__ import annotations
 
 """
 ============================================================
-build_model.py  (NO external Swin checkpoints)
+build_model.py
 
-ROLE (SSL CONTEXT)
------------------
-Builds the *same topology* as training:
-- Swin2D wrapper (audio) with default config
-- Swin3D wrapper (video) with BuildSwin3DConfig defaults used in training
-- AVPretrainArchitecture
+ROLE
+----
+Rebuilds the *exact SSL model topology* used during training,
+without assuming any external pretrained checkpoints.
 
-Then (elsewhere) you load best_weights.pt which contains ALL weights:
-✓ Swin2D
-✓ Swin3D
-✓ VACL/CPE stacks
+Key facts (your setup):
+-----------------------
+- Swin2D and Swin3D are trained ON THE FLY
+- best_weights.pt contains ALL learned weights
+- No classification heads exist
+- Forward returns ONLY SSL losses
+
+This file is used by:
+- min_eval_ssl_losses.py
+- any future probing / export scripts
 ============================================================
 """
 
@@ -23,8 +27,10 @@ from dataclasses import dataclass
 from typing import Tuple
 import torch
 
-from pretrain_architecture import AVPretrainArchitecture, ArchitectureConfig
+# === Core SSL architecture ===
+from core.training_systems.architectures.pretrain_architecture import AVPretrainArchitecture, ArchitectureConfig
 
+# === Swin wrappers (must match training) ===
 from scripts.feature_extraction.SWIN.main.MAIN_swin2d_wrapper import (
     Swin2DAudioBackboneWrapper,
     Swin2DAudioWrapperConfig,
@@ -33,36 +39,54 @@ from scripts.feature_extraction.SWIN.main.MAIN_swin_3d_wrapper import VideoBackb
 from scripts.feature_extraction.SWIN.main.build_swin3d import BuildSwin3DConfig
 
 
+# ============================================================
+# [CONFIG] Minimal build args for inference
+# ============================================================
 @dataclass
 class BuildModelArgs:
     device: str = "cuda"
-    freeze_backbones: bool = True   # keep True for evaluation_for_detection_model to avoid accidental grads
+    freeze_backbones: bool = True
 
 
+# ============================================================
+# [HELPER] Freeze modules for inference safety
+# ============================================================
 def _freeze_module(m: torch.nn.Module) -> None:
+    """
+    Disables gradients and switches to eval mode.
+
+    Prevents:
+    - accidental finetuning
+    - batchnorm / dropout drift
+    """
     for p in m.parameters():
         p.requires_grad = False
     m.eval()
 
 
+# ============================================================
+# [CORE] Build SSL model topology (no weights loaded here)
+# ============================================================
 def build_model(args: BuildModelArgs) -> AVPretrainArchitecture:
-    # ------------------------------------------------------------
-    # [MATCH TRAINING] Build Swin2D audio backbone (default config)
-    # ------------------------------------------------------------
+    """
+    Constructs the SSL architecture exactly as in training.
+
+    Returns:
+        AVPretrainArchitecture
+        (forward() → dict of SSL losses only)
+    """
+
+    # -------- Audio backbone (Swin2D) --------
     audio_backbone = Swin2DAudioBackboneWrapper(
         Swin2DAudioWrapperConfig(
-            # Keep defaults (as in your main_trainer_pretrain.py)
+            # Defaults must match training
         )
     )
 
-    # ------------------------------------------------------------
-    # [MATCH TRAINING] Build Swin3D video backbone
-    # NOTE: fields must match your BuildSwin3DConfig dataclass
-    # ------------------------------------------------------------
+    # -------- Video backbone (Swin3D) --------
     swin3d_cfg = BuildSwin3DConfig(
         out="5d",
-        use_checkpoint=True,  # activation memory saver (same as training)
-        # add other required fields only if your builder requires them
+        use_checkpoint=True,   # same activation checkpointing as training
     )
     video_backbone = VideoBackboneSwin3D(swin3d_cfg)
 
@@ -70,9 +94,7 @@ def build_model(args: BuildModelArgs) -> AVPretrainArchitecture:
         _freeze_module(audio_backbone)
         _freeze_module(video_backbone)
 
-    # ------------------------------------------------------------
-    # [ARCH CFG] SSL-only objectives
-    # ------------------------------------------------------------
+    # -------- SSL architecture config --------
     arch_cfg = ArchitectureConfig(
         vacl_s_out=64,
         vacl_d_v=256,
@@ -96,17 +118,30 @@ def build_model(args: BuildModelArgs) -> AVPretrainArchitecture:
     return model
 
 
+# ============================================================
+# [LOAD] Load trained weights (includes Swins + SSL heads)
+# ============================================================
 def load_weights_into_model(
     model: torch.nn.Module,
     weights_pt: str,
     strict: bool = True,
 ) -> Tuple[int, int]:
     """
-    Loads checkpoints/best_weights.pt saved by your AVPretrainSystem:
-        payload["state_dict"] = self.model.state_dict()
+    Loads weights saved by AVPretrainSystem:
 
-    This includes Swin2D/Swin3D weights (trained on the fly).
+        payload["state_dict"] = model.state_dict()
+
+    This includes:
+    - Swin2D weights
+    - Swin3D weights
+    - VACL parameters
+    - InfoNCE / CPE parameters
     """
     payload = torch.load(weights_pt, map_location="cpu")
     model.load_state_dict(payload["state_dict"], strict=strict)
+
     return int(payload.get("epoch", -1)), int(payload.get("global_step", -1))
+
+
+
+
