@@ -55,7 +55,7 @@ class OfflineAudioExportConfig:
     # Default behavior remains unchanged because we default to AudioPreprocessorNPVConfig().
     # ===============================================================
     audio_prep_cfg: AudioPreprocessorNPVConfig = field(default_factory=AudioPreprocessorNPVConfig)
-
+    audio_output_dir: Optional[Path] = None
     @property
     def batch_dir(self) -> Path:
         return self.offline_root / self.batch_name
@@ -158,7 +158,7 @@ class OfflineAudioExporter(pl.LightningModule):
             audio_path=audio_input_path,
             clip_id=clip_id,
             segments_sec=segments_sec,
-            out_dir=self.cfg.audio_pt_dir / clip_id,
+            out_pt_path=self.cfg.audio_pt_dir
         )
 
         return {
@@ -239,7 +239,6 @@ def main() -> None:
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--precision", type=str, default="32")
-
     args = parser.parse_args()
 
     cfg = OfflineAudioExportConfig(
