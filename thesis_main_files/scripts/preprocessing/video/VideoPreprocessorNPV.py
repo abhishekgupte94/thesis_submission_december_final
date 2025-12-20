@@ -21,6 +21,20 @@ except Exception:
     FaceAnalysis = None  # type: ignore
 
 
+# [ADDED] helper to convert list of BGR uint8 frames to torch uint8 (C,T,H,W)
+def _crops_to_uint8_cthw(crops: List[np.ndarray]) -> torch.Tensor:
+    """
+    crops: List of (H, W, 3) uint8 BGR numpy arrays
+    returns: (3, T, H, W) torch.uint8
+    """
+    # (T, H, W, 3)
+    thwc = torch.from_numpy(np.stack(crops, axis=0)).to(torch.uint8)
+
+    # (3, T, H, W)
+    cthw = thwc.permute(3, 0, 1, 2).contiguous()
+    return cthw
+
+
 # ======================================================================
 # [ADDED] Helper: write BGR frames to a single segment video (.mp4)
 # - Keeps the rest of the preprocessor API unchanged.
@@ -339,16 +353,16 @@ class VideoPreprocessorNPV:
         return all_segment_crops
 
     def process_and_save_facecrops_to_disk_from_word_times(
-        self,
-        video_path: Union[str, Path],
-        word_times: Sequence[Sequence[float]],
-        out_dir: Union[str, Path],
-        keep_full_when_no_face: bool = True,
-        min_factor: float = 0.5,
-        max_factor: float = 1.5,
-        target_clip_duration: Optional[float] = None,
-        jpeg_quality: int = 95,
-        out_pt_path: Optional[Union[str, Path]] = None,
+            self,
+            video_path: Union[str, Path],
+            word_times: Sequence[Sequence[float]],
+            out_dir: Union[str, Path],
+            keep_full_when_no_face: bool = True,
+            min_factor: float = 0.5,
+            max_factor: float = 1.5,
+            target_clip_duration: Optional[float] = None,
+            jpeg_quality: int = 95,
+            out_pt_path: Optional[Union[str, Path]] = None,
     ) -> Tuple[int, int]:
         """
         Existing API: keep as-is.
@@ -395,6 +409,22 @@ class VideoPreprocessorNPV:
                 ok = cv2.imwrite(str(out_path), crop_bgr, encode_params)
                 if ok:
                     total_saved += 1
+
+            # -------------------------------
+            # [ADDED] Save segment as uint8 tensor in required format:
+            #         "video_u8_cthw": (3, T, H, W), uint8
+            # -------------------------------
+            if len(crops) > 0:
+                video_u8_cthw = _crops_to_uint8_cthw(crops)  # (3,T,H,W) uint8
+                seg_pt_path = seg_dir / f"seg_{seg_idx:04d}.pt"
+                torch.save(
+                    {
+                        "video_u8_cthw": video_u8_cthw,
+                        "segment_index": seg_idx,
+                        "num_frames": int(video_u8_cthw.shape[1]),  # T
+                    },
+                    seg_pt_path,
+                )
 
         if out_pt_path is not None:
             out_pt_path = Path(out_pt_path)
