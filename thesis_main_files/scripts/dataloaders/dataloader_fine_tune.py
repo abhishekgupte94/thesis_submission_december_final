@@ -225,6 +225,15 @@ class SegmentDataset(Dataset):
             video = video.to(torch.uint8)
 
         # ------------------------------------------------------------
+        # [ADDED | SAFETY] Convert BGR -> RGB at load time
+        # Rationale:
+        #   - VideoPreprocessorNPV saves crops in OpenCV-native BGR order
+        #   - Our saved .pt tensors are (3,T,H,W) uint8 with channels [B,G,R]
+        #   - Convert once here to feed RGB to downstream model/transforms
+        # ------------------------------------------------------------
+        video = video[[2, 1, 0], ...].contiguous()
+
+        # ------------------------------------------------------------
         # [KEPT] Label handling
         # ------------------------------------------------------------
         y = self._labels_by_clip_id.get(clip_id, None)
