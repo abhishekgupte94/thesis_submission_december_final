@@ -244,7 +244,7 @@ class AudioPreprocessorNPV:
             self,
             audio_path: Union[str, Path],
             segments_sec: Sequence[Tuple[float, float]],
-            out_pt_path: Union[str, Path],
+            out_dir: Union[str, Path],
             log_csv_path: Optional[Union[str, Path]] = None,
             *,
             clip_id: Optional[Union[str, int]] = None,
@@ -384,7 +384,7 @@ class AudioPreprocessorNPV:
             return self.process_and_save_from_segments_sec_segmentlocal(
                 audio_path=audio_path,
                 segments_sec=segments_sec,
-                out_pt_path=out_pt_path,
+                out_dir=out_pt_path,
                 log_csv_path=log_csv_path,
             )
 
