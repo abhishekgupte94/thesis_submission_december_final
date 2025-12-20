@@ -118,7 +118,7 @@ if __name__ == "__main__":
 
     # Build the target root directory under thesis_main_files/
     root_dir = (REPO_ROOT / "data" / "processed" / args.base_subdir / args.file_root).resolve()
-
+    print(f"{root_dir} is the root dir")
     if not root_dir.exists():
         raise FileNotFoundError(
             f"[export] Resolved root_dir does not exist:\n"
