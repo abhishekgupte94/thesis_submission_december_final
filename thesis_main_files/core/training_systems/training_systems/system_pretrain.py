@@ -2,16 +2,19 @@
 # ============================================================
 # [FINAL PATCHED] AVPretrainSystem (LightningModule)
 #
-# Responsibilities:
-#   - Receives already-collated batches from DataModule
-#   - Moves tensors to GPU (Lightning hook)
-#   - Runs forward pass
-#   - Logs train / val losses to TensorBoard
-#   - Optionally tracks energy (CodeCarbon) and FLOPs (fvcore)
+# WHY THIS FILE EXISTS:
+# - Lightning owns the training loop; this class is the clean place to:
+#   1) move CPU batches to the correct GPU in DDP (transfer_batch_to_device)
+#   2) normalize/prepare tensors (e.g., uint8 video -> float32)
+#   3) run forward() and compute loss (delegated to architecture)
+#   4) log train/val metrics consistently (TensorBoard via self.log)
+#   5) save checkpoints safely in DDP (rank0 only)
+#   6) optionally run profiling/energy tracking (rank0 only)
 #
-# IMPORTANT:
-#   - No model construction here
-#   - No .to(device) inside architecture/backbones
+# DESIGN RULES:
+# - Do NOT construct backbones here (keeps System generic)
+# - Do NOT call .to(device) inside architecture/backbones (Lightning handles it)
+# - Keep outputs scalar losses (no logits/intermediates by default) to save VRAM
 # ============================================================
 
 from __future__ import annotations
@@ -24,6 +27,10 @@ import lightning as pl
 
 # ============================================================
 # [ADDED] Optional energy tracking (CodeCarbon)
+#
+# WHY:
+# - Logs CO2 estimate for your training run (thesis/report friendly)
+# - Must run on rank0 only to avoid duplicate tracking
 # ============================================================
 try:
     from codecarbon import EmissionsTracker  # type: ignore
@@ -35,6 +42,11 @@ except Exception:
 
 # ============================================================
 # [ADDED] Optional FLOPs profiling (fvcore)
+#
+# WHY:
+# - Gives an approximate compute cost per forward pass
+# - Best-effort only; some external repo modules may not be trace-friendly
+# - Run once on rank0 only to avoid overhead
 # ============================================================
 try:
     from fvcore.nn import FlopCountAnalysis  # type: ignore
@@ -55,26 +67,38 @@ class AVPretrainSystem(pl.LightningModule):
         lambda_cpe: float = 1.0,
         # ============================================================
         # [ADDED] Profiling toggles
+        # WHY:
+        # - keep default OFF to prevent accidental overhead during main runs
         # ============================================================
         enable_energy_tracking: bool = False,
         enable_flops_profile: bool = False,
     ) -> None:
         super().__init__()
 
-        # [KEPT]
+        # [KEPT] injected architecture (owns backbones + heads)
         self.model = model
+
+        # [KEPT] base optimizer hyperparams
         self.lr = float(lr)
         self.weight_decay = float(weight_decay)
+
+        # [KEPT] these are fallback weights if you ever do weighting in System
+        # NOTE: your recommended approach is to weight in Architecture instead.
         self.lambda_vacl = float(lambda_vacl)
         self.lambda_cpe = float(lambda_cpe)
 
-        # [ADDED]
+        # [ADDED] profiling toggles
         self.enable_energy_tracking = bool(enable_energy_tracking)
         self.enable_flops_profile = bool(enable_flops_profile)
         self._emissions_tracker: Optional[object] = None
 
         # ============================================================
-        # [ADDED] Checkpoint saving config (DDP-safe: rank0 only saves)
+        # [ADDED] Checkpoint saving config
+        #
+        # WHY:
+        # - rank0-only saves in DDP (prevents file corruption / duplicate writes)
+        # - save "last" every epoch for crash recovery
+        # - save "best" using val/loss_total for stable SSL monitoring
         # ============================================================
         self.save_dir = "checkpoints"
         self.save_every_n_epochs = 1
@@ -83,16 +107,22 @@ class AVPretrainSystem(pl.LightningModule):
 
     # ============================================================
     # [ADDED] Lightning hook: move batch to GPU & normalize
+    #
+    # WHY THIS EXISTS:
+    # - DataLoader loads on CPU (map_location="cpu") for DDP-safety
+    # - This hook is the canonical Lightning place to move tensors per-rank
+    # - Uses non_blocking=True for overlapped H2D copy when pin_memory=True
     # ============================================================
     def transfer_batch_to_device(self, batch, device, dataloader_idx):
         """
-        batch keys:
+        Expected batch keys from your patched DataModule:
           - audio          : (B, n_mels, T_audio) float32
           - video_u8_cthw  : (B, 3, T_video, H, W) uint8
         """
 
         batch["audio"] = batch["audio"].to(device, non_blocking=True)
 
+        # uint8 -> float32 in [0,1]
         batch["video"] = (
             batch["video_u8_cthw"]
             .to(device, non_blocking=True)
@@ -106,6 +136,7 @@ class AVPretrainSystem(pl.LightningModule):
     # [ADDED] Start trackers once at fit start
     # ============================================================
     def on_fit_start(self) -> None:
+        # [ADDED] energy tracking (rank0 only)
         if self.enable_energy_tracking and _HAS_CODECARBON and self.global_rank == 0:
             self._emissions_tracker = EmissionsTracker(
                 project_name="stage1_ssl",
@@ -114,6 +145,7 @@ class AVPretrainSystem(pl.LightningModule):
             )
             self._emissions_tracker.start()
 
+        # [ADDED] FLOPs profiling (rank0 only; best-effort)
         if self.enable_flops_profile and _HAS_FVCORE and self.global_rank == 0:
             try:
                 self._profile_flops_once()
@@ -139,10 +171,13 @@ class AVPretrainSystem(pl.LightningModule):
 
     # ============================================================
     # [ADDED] FLOPs profiling helper (best-effort)
+    #
+    # WHY:
+    # - Uses a tiny dummy batch to avoid OOM and keep it quick
+    # - Logs "profile/flops_per_forward" once per run
     # ============================================================
     def _profile_flops_once(self) -> None:
         B, T, H, W = 1, 4, 224, 224
-
         dummy_video = torch.zeros((B, 3, T, H, W), device=self.device)
         dummy_audio = torch.zeros((B, 1, 64, 96), device=self.device)
 
@@ -161,33 +196,47 @@ class AVPretrainSystem(pl.LightningModule):
 
     # ============================================================
     # [PATCHED] Training step with TensorBoard logging
+    #
+    # WHY:
+    # - training_step should be minimal: forward + scalar loss + logs
+    # - we log both total and component losses (if present) for diagnosis
     # ============================================================
     def training_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
-        audio = batch["audio"].unsqueeze(1)
-        video = batch["video"]
+        audio = batch["audio"].unsqueeze(1)  # (B,1,n_mels,T)
+        video = batch["video"]               # (B,3,T,H,W)
 
         out = self.model(video_in=video, audio_in=audio)
 
-        # [ADDED] Log padding stats occasionally
+        # [ADDED] Occasional padding/bucket stats for VRAM/debug insight
         if batch_idx % 50 == 0:
             if "Tv_max" in batch:
                 self.log("train/Tv_max", float(batch["Tv_max"]), on_step=True, prog_bar=False, sync_dist=True)
             if "Ta_max" in batch:
                 self.log("train/Ta_max", float(batch["Ta_max"]), on_step=True, prog_bar=False, sync_dist=True)
 
+        # [KEPT] total loss is the training driver
         loss_total = out["loss_total"]
         self.log("train/loss_total", loss_total, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
 
-        # [ADDED] Component losses
+        # [ADDED] component logs (present if Architecture returns them)
         if "loss_vacl" in out and out["loss_vacl"] is not None:
             self.log("train/loss_vacl", out["loss_vacl"], on_step=True, on_epoch=True, sync_dist=True)
-        if "loss_cpe" in out and out["loss_cpe"] is not None:
-            self.log("train/loss_cpe", out["loss_cpe"], on_step=True, on_epoch=True, sync_dist=True)
 
+        # [ADDED] CPE raw + weighted InfoNCE logs (if present)
+        if "loss_cpe_infonce" in out and out["loss_cpe_infonce"] is not None:
+            self.log("train/loss_cpe_infonce", out["loss_cpe_infonce"], on_step=True, on_epoch=True, sync_dist=True)
+        if "loss_cpe_infonce_weighted" in out and out["loss_cpe_infonce_weighted"] is not None:
+            self.log("train/loss_cpe_infonce_weighted", out["loss_cpe_infonce_weighted"], on_step=True, on_epoch=True, sync_dist=True)
+
+        # [KEPT] backward happens automatically in Lightning
         return loss_total
 
     # ============================================================
     # [ADDED] Validation step (SSL stability monitoring)
+    #
+    # WHY:
+    # - In SSL, "val loss" is the same objective on held-out segments
+    # - It helps detect collapse/instability/overfitting-like behavior
     # ============================================================
     def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
         audio = batch["audio"].unsqueeze(1)
@@ -200,13 +249,21 @@ class AVPretrainSystem(pl.LightningModule):
 
         if "loss_vacl" in out and out["loss_vacl"] is not None:
             self.log("val/loss_vacl", out["loss_vacl"], on_step=False, on_epoch=True, sync_dist=True)
-        if "loss_cpe" in out and out["loss_cpe"] is not None:
-            self.log("val/loss_cpe", out["loss_cpe"], on_step=False, on_epoch=True, sync_dist=True)
+
+        if "loss_cpe_infonce" in out and out["loss_cpe_infonce"] is not None:
+            self.log("val/loss_cpe_infonce", out["loss_cpe_infonce"], on_step=False, on_epoch=True, sync_dist=True)
+        if "loss_cpe_infonce_weighted" in out and out["loss_cpe_infonce_weighted"] is not None:
+            self.log("val/loss_cpe_infonce_weighted", out["loss_cpe_infonce_weighted"], on_step=False, on_epoch=True, sync_dist=True)
 
         return loss_total
 
     # ============================================================
     # [PATCHED] Explicit optimizer parameter groups (DDP-safe)
+    #
+    # WHY:
+    # - Guarantees both backbones are included (trainable) even if you
+    #   later freeze/unfreeze parts explicitly.
+    # - Avoids accidental duplicate params in groups by ID filtering.
     # ============================================================
     def configure_optimizers(self):
         def _ids(params: Iterable[torch.nn.Parameter]) -> Set[int]:
@@ -236,15 +293,12 @@ class AVPretrainSystem(pl.LightningModule):
 
     # ============================================================
     # [ADDED] Rank-0 checkpoint saver (full .ckpt + optional weights-only)
+    #
+    # WHY:
+    # - Full checkpoint: resume training exactly
+    # - Weights-only: lightweight artifact for inference/feature extraction
     # ============================================================
     def _save_checkpoint_files(self, tag: str) -> None:
-        """
-        Saves:
-          - Full Lightning checkpoint: <save_dir>/<tag>.ckpt
-          - Optional weights-only:     <save_dir>/<tag>_weights.pt
-
-        DDP-safe: only runs on global_rank == 0.
-        """
         if self.global_rank != 0:
             return
 
@@ -253,11 +307,9 @@ class AVPretrainSystem(pl.LightningModule):
         save_root = Path(self.save_dir)
         save_root.mkdir(parents=True, exist_ok=True)
 
-        # Full Lightning checkpoint (includes optimizer, schedulers, etc.)
         ckpt_path = save_root / f"{tag}.ckpt"
         self.trainer.save_checkpoint(str(ckpt_path))
 
-        # Weights-only payload (small, for inference/extraction)
         if self.save_weights_only:
             weights_path = save_root / f"{tag}_weights.pt"
             payload = {
@@ -269,6 +321,9 @@ class AVPretrainSystem(pl.LightningModule):
 
     # ============================================================
     # [ADDED] Save "last" every N epochs
+    #
+    # WHY:
+    # - Ensures you always have a recent recovery point
     # ============================================================
     def on_train_epoch_end(self) -> None:
         if (int(self.current_epoch) + 1) % int(self.save_every_n_epochs) == 0:
@@ -276,6 +331,10 @@ class AVPretrainSystem(pl.LightningModule):
 
     # ============================================================
     # [ADDED] Track best val loss and save "best"
+    #
+    # WHY:
+    # - In SSL, "best" is defined by minimal val objective on held-out data
+    # - Useful for selecting a stable checkpoint for downstream evaluation
     # ============================================================
     def on_validation_epoch_end(self) -> None:
         metric = self.trainer.callback_metrics.get("val/loss_total", None)
@@ -290,6 +349,3 @@ class AVPretrainSystem(pl.LightningModule):
         if val_loss < self._best_val:
             self._best_val = val_loss
             self._save_checkpoint_files(tag="best")
-
-
-

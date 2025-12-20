@@ -208,7 +208,7 @@ class CPUOptimizedAlignment(nn.Module):
         mvit_features: torch.Tensor
     ) -> Dict[str, torch.Tensor]:
         """
-        Optimized inference mode for CPU
+        Optimized evaluation_for_detection_model mode for CPU
         """
         self.eval()
 
@@ -424,8 +424,8 @@ def main():
 
     print("Training completed!")
 
-    # Test inference
-    print("\nTesting inference...")
+    # Test evaluation_for_detection_model
+    print("\nTesting evaluation_for_detection_model...")
     test_ast = torch.randn(2, 101, 768)
     test_mvit = torch.randn(2, 8, 768)
 

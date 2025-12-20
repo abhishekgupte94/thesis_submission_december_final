@@ -4,7 +4,7 @@
 # - Uses ASTModel (backbone only).
 # - Extracts features at LayerNorm after Attention residual (pre-FFN) on the FINAL block.
 # - Optional: reshape to time-series (avg over freq patches) and/or pool.
-# - Enhanced with automatic grid inference and time axis generation.
+# - Enhanced with automatic grid evaluation_for_detection_model and time axis generation.
 # - Changed: --out is treated as a directory; saves <out>/audio_set.npz and <out>/audio_set.meta.json
 
 import os

@@ -91,3 +91,8 @@ def export_mp4_segments_to_sibling_video_pt_dir(
         written += 1
 
     print(f"[export] found={len(mp4s)} mp4s, written={written} pt files")
+
+if __name__ == "__main__":
+    # REPO_ROOT = Path(__file__).resolve().parents[1]
+    # export_mp4_segments_to_sibling_video_pt_dir(root_dir = overwrite = True)
+    # file_path  = (REPO_ROOT/"data"/"processed"/"video_files"..../args.file_root).resolve()

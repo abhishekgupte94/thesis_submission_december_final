@@ -54,99 +54,117 @@ class PRBExtraction:
     fusion: PRBMaps
 
 
-class BatfdPlusPRBExtractor:
-    """
-    Phase-1 extractor:
-      - loads BatfdPlus Lightning .ckpt
-      - returns post-PRB maps (video/audio) + fused post-PRB maps
+# integrations/batfdplus_prb_subarch.py
+from __future__ import annotations
 
-    Expected inputs:
-      video: (B, C, T, H, W)
+from dataclasses import dataclass
+from typing import Dict, Any, Optional
+
+import torch
+import torch.nn as nn
+from torch import Tensor
+
+# Official repo import (keep path consistent with training)
+from model.batfd_plus import BatfdPlus
+
+
+@dataclass
+class PRBMaps:
+    # each: (B, D, T)
+    p: Tensor
+    c: Tensor
+    pc: Tensor
+
+
+@dataclass
+class PRBExtraction:
+    video: PRBMaps
+    audio: PRBMaps
+    fusion: PRBMaps
+
+
+class BatfdPlusPRBSubArch(nn.Module):
+    """
+    Drop-in sub-architecture for your thesis model.
+
+    - Loads official BatfdPlus from a Lightning .ckpt
+    - Runs only up to post-PRB (per-modality) + post-PRB fusion (Option B)
+    - DDP-friendly: no global caches, no mutable shared state, pure forward.
+
+    Inputs:
+      video: (B, 3, 512, 96, 96)
       audio: (B, 64, 2048)
-    Returned maps:
-      (B, D, T) for p/c/pc in each of {video, audio, fusion}.
+    Outputs:
+      PRBExtraction with maps (B, D, 512)
     """
 
     def __init__(
         self,
         ckpt_path: str,
-        device: Optional[str] = None,
+        device_map_location: Optional[str] = None,
         amp: bool = True,
         strict: bool = True,
+        freeze: bool = True,
     ):
+        super().__init__()
         self.ckpt_path = ckpt_path
         self.amp = amp
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.strict = strict
+
+        map_location = device_map_location or "cpu"
+
+        # IMPORTANT: instantiate inside each process (DDP will spawn processes)
+        # Loading on CPU avoids GPU spike during init; move later in .to(device).
 
         _ensure_vst_on_syspath()
-        from model.batfd_plus import BatfdPlus
-        # Lightning load (weights + hparams)
-        self.model: BatfdPlus = BatfdPlus.load_from_checkpoint(
+        from model.batfd_plus import BATfdPlus
+        self.batfd: BatfdPlus = BatfdPlus.load_from_checkpoint(
             ckpt_path,
-            map_location=self.device,
+            map_location=map_location,
             strict=strict,
         )
 
-        self.model.eval()
-        self.model.to(self.device)
+        self.batfd.eval()
 
-    @torch.no_grad()
-    def extract(
-        self,
-        video: Tensor,
-        audio: Tensor,
-        return_dict: bool = True,
-    ) -> PRBExtraction | Dict[str, Any]:
-        """
-        Returns post-PRB maps:
-          - per modality: video/audio p,c,pc
-          - fused: p,c,pc
+        if freeze:
+            for p in self.batfd.parameters():
+                p.requires_grad_(False)
 
-        NOTE:
-        We do NOT call self.model.forward_features() because the official repo’s
-        implementation uses torch.column_stack (2D op) which can be brittle if
-        tensors are 3D. We reproduce the same intent safely via torch.cat.
-        This does not affect checkpoint compatibility (no weights involved).
-        """
+    def forward(self, video: Tensor, audio: Tensor) -> PRBExtraction:
+        # NOTE: do not call batfd.forward() to avoid CBG/start-end/post-processing branches.
+        # We cut exactly at PRB + fusion.
 
-        video = video.to(self.device, non_blocking=True)
-        audio = audio.to(self.device, non_blocking=True)
+        # DDP-safe autocast: use if on CUDA
+        use_amp = self.amp and video.is_cuda
+        with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=use_amp):
+            # 1) encoders -> (B, 256, 512) intended
+            v_features = self.batfd.video_encoder(video)
+            a_features = self.batfd.audio_encoder(audio)
 
-        use_amp = self.amp and (self.device.startswith("cuda"))
-        autocast_dtype = torch.float16  # safe default for inference
+            # 2) frame heads -> (B, 1, 512)
+            v_frame = self.batfd.video_frame_classifier(v_features)
+            a_frame = self.batfd.audio_frame_classifier(a_features)
 
-        with torch.autocast(device_type="cuda", dtype=autocast_dtype, enabled=use_amp):
-            # 1) encoders -> (B, C_f, T)
-            v_features = self.model.video_encoder(video)
-            a_features = self.model.audio_encoder(audio)
-
-            # 2) frame heads -> (B, 1, T)
-            v_frame = self.model.video_frame_classifier(v_features)
-            a_frame = self.model.audio_frame_classifier(a_features)
-
-            # 3) boundary-module inputs -> (B, C_f+1, T)
+            # 3) boundary-module inputs -> (B, 257, 512)
             v_bm_in = torch.cat([v_features, v_frame], dim=1)
             a_bm_in = torch.cat([a_features, a_frame], dim=1)
 
-            # 4) POST-PRB per modality (BoundaryModulePlus)
-            v_p, v_c, v_pc = self.model.video_boundary_module(v_bm_in)  # each (B, D, T)
-            a_p, a_c, a_pc = self.model.audio_boundary_module(a_bm_in)
+            # 4) post-PRB per-modality maps -> each (B, D, 512)
+            v_p, v_c, v_pc = self.batfd.video_boundary_module(v_bm_in)
+            a_p, a_c, a_pc = self.batfd.audio_boundary_module(a_bm_in)
 
-            # 5) POST-PRB fused boundary maps (ModalFeatureAttnBoundaryMapFusion)
-            f_p = self.model.prb_fusion_p(v_bm_in, a_bm_in, v_p, a_p)
-            f_c = self.model.prb_fusion_c(v_bm_in, a_bm_in, v_c, a_c)
-            f_pc = self.model.prb_fusion_p_c(v_bm_in, a_bm_in, v_pc, a_pc)
+            # 5) post-PRB fused maps -> each (B, D, 512)
+            f_p = self.batfd.prb_fusion_p(v_bm_in, a_bm_in, v_p, a_p)
+            f_c = self.batfd.prb_fusion_c(v_bm_in, a_bm_in, v_c, a_c)
+            f_pc = self.batfd.prb_fusion_p_c(v_bm_in, a_bm_in, v_pc, a_pc)
 
-        out = PRBExtraction(
+        return PRBExtraction(
             video=PRBMaps(p=v_p, c=v_c, pc=v_pc),
             audio=PRBMaps(p=a_p, c=a_c, pc=a_pc),
             fusion=PRBMaps(p=f_p, c=f_c, pc=f_pc),
         )
 
-        if not return_dict:
-            return out
-
-        # dict form is convenient for logging/saving
+    def as_dict(self, out: PRBExtraction) -> Dict[str, Any]:
         return {
             "video": {"p": out.video.p, "c": out.video.c, "pc": out.video.pc},
             "audio": {"p": out.audio.p, "c": out.audio.c, "pc": out.audio.pc},

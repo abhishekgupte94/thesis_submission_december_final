@@ -5,7 +5,7 @@
 # - Uses ASTModel (backbone only).
 # - Extracts Level-1 features: post-MHA residual, pre-MLP.
 # - Optional: reshape to time-series (avg over freq patches) and/or pool.
-# - Enhanced with automatic grid inference and time axis generation.
+# - Enhanced with automatic grid evaluation_for_detection_model and time axis generation.
 #
 # Example:
 #   python ast_level1_extractor_v2_dir_astmodel.py \
@@ -472,7 +472,7 @@ def pool_tokens(tokens: torch.Tensor, mode: str = "mean") -> torch.Tensor:
 #                 print(f"Model config patch size: {getattr(model.config, 'patch_size', 'Not found')}")
 #                 print(f"Feature extractor - mel bins: {fe.num_mel_bins}, max length: {fe.max_length}")
 #
-#             # Get tokens with special tokens for grid inference
+#             # Get tokens with special tokens for grid evaluation_for_detection_model
 #             tokens_with_specials = ast_level1_post_mha_tokens(model, x, remove_cls=False)  # (B, total_seq_len, 768)
 #
 #             if args.verbose or debug_tokens:

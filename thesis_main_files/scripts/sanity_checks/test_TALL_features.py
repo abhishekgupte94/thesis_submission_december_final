@@ -82,7 +82,7 @@ DROP_PATH_RATE = 0.1
 DROP_BLOCK_RATE = 0.0
 USE_CHECKPOINT = False   # gradient checkpointing in the model
 
-# Autocast (mixed precision) for faster inference on GPU
+# Autocast (mixed precision) for faster evaluation_for_detection_model on GPU
 USE_AMP = True
 
 
@@ -140,7 +140,7 @@ def print_metrics_placeholder(metrics: Dict[str, Any]) -> None:
 
 def build_model(num_classes: int) -> torch.nn.Module:
     """
-    Construct the TALL-Swin model for inference and move it to DEVICE.
+    Construct the TALL-Swin model for evaluation_for_detection_model and move it to DEVICE.
 
     This mirrors the creation logic from main.py, but in a simplified,
     hard-coded form using the constants defined above. It also optionally

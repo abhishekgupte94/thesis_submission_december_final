@@ -137,7 +137,7 @@ class VideoPreprocessorNPV:
                 # ================================================================
                 # [ADDED] Ensure ONNXRuntime CUDA EP uses the correct GPU per-rank.
                 # Without provider_options, ORT often defaults to device_id=0,
-                # causing ALL DDP ranks to run heavy inference on GPU 0.
+                # causing ALL DDP ranks to run heavy evaluation_for_detection_model on GPU 0.
                 #
                 # We keep semantics identical:
                 # - still CUDAExecutionProvider when GPU is enabled

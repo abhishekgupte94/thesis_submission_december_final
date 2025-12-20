@@ -247,3 +247,28 @@ thesis_main_files/data/processed/splits/train/*
 thesis_main_files/data/processed/splits/val/*
 !thesis_main_files/data/processed/splits/val/*.gitkeep
 !thesis_main_files/data/processed/splits/val/*
+
+# Ignore files in thesis_main_files/temp_files/logs_for_audio_conversion/, but allow the directory and its .gitkeep
+thesis_main_files/temp_files/logs_for_audio_conversion/*
+!thesis_main_files/temp_files/logs_for_audio_conversion/.gitkeep
+!thesis_main_files/temp_files/logs_for_audio_conversion/
+
+# Ignore files in thesis_main_files/data/processed/DFDC/, but allow the directory and its .gitkeep
+thesis_main_files/data/processed/DFDC/*
+!thesis_main_files/data/processed/DFDC/.gitkeep
+!thesis_main_files/data/processed/DFDC/
+
+# Ignore files in thesis_main_files/data/processed/DFDC/DFDC_timestamps_json_for_offline_training, but allow the directory and its .gitkeep
+thesis_main_files/data/processed/DFDC/DFDC_timestamps_json_for_offline_training/*
+!thesis_main_files/data/processed/DFDC/DFDC_timestamps_json_for_offline_training/.gitkeep
+!thesis_main_files/data/processed/DFDC/DFDC_timestamps_json_for_offline_training/
+
+# Ignore files in thesis_main_files/data/processed/video_files/DFDC/audio/, but allow the directory and its .gitkeep
+thesis_main_files/data/processed/video_files/DFDC/audio/*
+!thesis_main_files/data/processed/video_files/DFDC/audio/.gitkeep
+!thesis_main_files/data/processed/video_files/DFDC/audio/
+
+# Ignore files in thesis_main_files/data/processed/video_files/DFDC/video/, but allow the directory and its .gitkeep
+thesis_main_files/data/processed/video_files/DFDC/video/*
+!thesis_main_files/data/processed/video_files/DFDC/video/.gitkeep
+!thesis_main_files/data/processed/video_files/DFDC/video/

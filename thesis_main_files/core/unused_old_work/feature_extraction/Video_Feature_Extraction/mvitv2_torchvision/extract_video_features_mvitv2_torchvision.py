@@ -287,7 +287,7 @@ class MViTv2FeatureExtractor:
                     # already (C, T, H, W)
                     pass
                 else:
-                    # Best-effort inference: put channel (3) first, time second
+                    # Best-effort evaluation_for_detection_model: put channel (3) first, time second
                     dims = list(vt.shape)
                     c_axis = next((i for i, s in enumerate(dims) if s == 3), None)
                     t_axis = 1 if c_axis == 0 else 0  # if channels at 0, time is 1; else time is 0

@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+import csv
 import os
 import subprocess
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 
 # -----------------------------
 # Helpers
 # -----------------------------
+LOG_DIR = "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/temp_files/logs_for_audio_conversion"
+VIDEO_DIR = "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/data/processed/video_files/LAV_DF/video"
+AUDIO_DIR = "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/data/processed/video_files/LAV_DF/audio"
+
+
 def ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
@@ -23,17 +29,48 @@ def run_ffmpeg(cmd: List[str]) -> bool:
             check=False,
         )
         if result.returncode != 0:
-            print("[ffmpeg] ERROR:", " ".join(cmd))
-            print(result.stderr.decode("utf-8", errors="ignore"))
             return False
         return True
     except FileNotFoundError:
-        print("[ffmpeg] ERROR: ffmpeg not found in PATH.")
         return False
 
 
+def _append_csv_row(csv_path: str, header: List[str], row: List[str]) -> None:
+    ensure_header = not os.path.exists(csv_path)
+    ensure_dir(str(Path(csv_path).parent))
+    with open(csv_path, "a", newline="") as f:
+        w = csv.writer(f)
+        if ensure_header:
+            w.writerow(header)
+        w.writerow(row)
+
+
+def _load_logged_video_paths(csv_path: str, video_path_col: str = "video_path") -> set:
+    """
+    Load a set of video_path values from a CSV log.
+    If the file doesn't exist or is malformed, returns an empty set.
+    """
+    if not os.path.exists(csv_path):
+        return set()
+
+    logged = set()
+    try:
+        with open(csv_path, "r", newline="") as f:
+            r = csv.DictReader(f)
+            if not r.fieldnames or video_path_col not in r.fieldnames:
+                return set()
+            for row in r:
+                vp = (row.get(video_path_col) or "").strip()
+                if vp:
+                    logged.add(vp)
+    except Exception:
+        return set()
+
+    return logged
+
+
 # -----------------------------
-# Single file conversion
+# Single-file conversion
 # -----------------------------
 def convert_video_to_audio(
     video_path: str,
@@ -42,12 +79,15 @@ def convert_video_to_audio(
     mono: bool = True,
     overwrite: bool = True,
     sanity_check_wav: bool = True,
-) -> bool:
+) -> Tuple[bool, str]:
+    """
+    Returns:
+        (ok, error_message)
+    """
     ensure_dir(os.path.dirname(audio_path) or ".")
 
     if not os.path.exists(video_path):
-        print(f"[ERROR] Missing video: {video_path}")
-        return False
+        return False, "missing video"
 
     ffmpeg_cmd = ["ffmpeg"]
     if overwrite:
@@ -65,26 +105,27 @@ def convert_video_to_audio(
 
     ffmpeg_cmd.append(audio_path)
 
-    if not run_ffmpeg(ffmpeg_cmd):
-        return False
+    ok = run_ffmpeg(ffmpeg_cmd)
+    if not ok:
+        return False, "ffmpeg failed"
 
     if sanity_check_wav:
         try:
             if not os.path.exists(audio_path) or os.path.getsize(audio_path) < 44:
-                print(f"[ERROR] Invalid WAV: {audio_path}")
-                return False
+                return False, "empty/invalid wav"
         except OSError:
-            return False
+            return False, "wav filesize check failed"
 
-    return True
+    return True, ""
 
 
 # -----------------------------
-# Directory → audio (parallel)
+# Directory → audio (parallel, capped, logged, resume-safe)
 # -----------------------------
 def convert_video_dir_to_audio_parallel(
     video_dir: str,
     audio_dir: str,
+    log_dir: str,
     *,
     exts: Sequence[str] = (".mp4", ".mkv", ".mov", ".webm", ".m4v"),
     num_workers: int = 8,
@@ -93,74 +134,145 @@ def convert_video_dir_to_audio_parallel(
     overwrite: bool = True,
     sanity_check_wav: bool = True,
     recursive: bool = False,
+    max_videos: Optional[int] = None,
+    success_csv_name: str = "audio_success.csv",
+    failed_csv_name: str = "audio_failed.csv",
 ) -> Dict[str, object]:
     """
-    Convert all videos in `video_dir` to WAVs in `audio_dir`
-    using the SAME filename (stem preserved).
+    Converts all videos in `video_dir` to WAV in `audio_dir` in parallel.
 
-    Example:
-        video_001.mp4 → video_001.wav
+    Logging (resume behavior):
+      - Writes successes to: <log_dir>/<success_csv_name>
+      - Writes failures  to: <log_dir>/<failed_csv_name>
+      - SKIPS any video_path already present in either CSV.
+
+    Audio naming:
+      - Output file is <audio_dir>/<video_stem>.wav (same stem as video).
     """
     vdir = Path(video_dir)
     adir = Path(audio_dir)
-    ensure_dir(str(adir))
+    ldir = Path(log_dir)
 
     if not vdir.is_dir():
         raise ValueError(f"Invalid video_dir: {video_dir}")
 
-    globber = vdir.rglob("*") if recursive else vdir.glob("*")
-    videos = [
-        p for p in globber
-        if p.is_file() and p.suffix.lower() in exts
-    ]
+    ensure_dir(str(adir))
+    ensure_dir(str(ldir))
 
-    def _worker(v: Path) -> Tuple[bool, str, str]:
-        audio_path = adir / f"{v.stem}.wav"
-        ok = convert_video_to_audio(
-            video_path=str(v),
-            audio_path=str(audio_path),
+    success_csv = str(ldir / success_csv_name)
+    failed_csv = str(ldir / failed_csv_name)
+
+    # Load resume state
+    done_success = _load_logged_video_paths(success_csv, video_path_col="video_path")
+    done_failed = _load_logged_video_paths(failed_csv, video_path_col="video_path")
+    done_all = done_success.union(done_failed)
+
+    # Collect videos (deterministic)
+    globber = vdir.rglob("*") if recursive else vdir.glob("*")
+    videos_all = sorted(
+        [p for p in globber if p.is_file() and p.suffix.lower() in set(exts)],
+        key=lambda p: p.name,
+    )
+
+    # Use absolute normalized paths for stable logging keys
+    def _norm(p: Path) -> str:
+        return str(p.resolve())
+
+    # Filter out already-logged
+    videos_new = [p for p in videos_all if _norm(p) not in done_all]
+
+    # Apply cap AFTER filtering, so it caps "new work"
+    if max_videos is not None:
+        videos_new = videos_new[:max_videos]
+
+    if not videos_new:
+        return {
+            "found_total": len(videos_all),
+            "already_logged": len(done_all),
+            "scheduled": 0,
+            "ok_count": 0,
+            "fail_count": 0,
+            "success_csv": success_csv,
+            "failed_csv": failed_csv,
+            "ok": [],
+            "failed": [],
+        }
+
+    # Worker
+    def _worker(v: Path) -> Tuple[bool, str, str, str]:
+        video_path = _norm(v)
+        audio_path = str((adir / f"{v.stem}.wav").resolve())
+        ok, err = convert_video_to_audio(
+            video_path=video_path,
+            audio_path=audio_path,
             sr=sr,
             mono=mono,
             overwrite=overwrite,
             sanity_check_wav=sanity_check_wav,
         )
-        if ok:
-            return True, str(v), str(audio_path)
-        return False, str(v), "conversion failed"
+        return ok, video_path, audio_path, err
 
     pool = ThreadPool(num_workers)
-    results = pool.imap_unordered(_worker, videos)
+    results = pool.imap_unordered(_worker, videos_new)
 
-    ok_list: List[Tuple[str, str]] = []
-    fail_list: List[Tuple[str, str]] = []
+    ok_rows: List[Tuple[str, str]] = []
+    fail_rows: List[Tuple[str, str]] = []
 
-    for success, vpath, info in results:
-        if success:
-            ok_list.append((vpath, info))
-            print(f"[OK] {Path(vpath).name} → {Path(info).name}")
+    for ok, video_path, audio_path, err in results:
+        if ok:
+            ok_rows.append((video_path, audio_path))
+            print(f"[OK] {Path(video_path).name} → {Path(audio_path).name}")
         else:
-            fail_list.append((vpath, info))
-            print(f"[FAIL] {Path(vpath).name}")
+            fail_rows.append((video_path, err))
+            print(f"[FAIL] {Path(video_path).name} ({err})")
 
     pool.close()
     pool.join()
 
+    # Write logs once at end (avoids thread locking issues)
+    for video_path, audio_path in ok_rows:
+        _append_csv_row(
+            success_csv,
+            header=["video_path", "audio_path"],
+            row=[video_path, audio_path],
+        )
+
+    for video_path, err in fail_rows:
+        _append_csv_row(
+            failed_csv,
+            header=["video_path", "error"],
+            row=[video_path, err],
+        )
+
     return {
-        "total": len(videos),
-        "ok_count": len(ok_list),
-        "fail_count": len(fail_list),
-        "ok": ok_list,
-        "failed": fail_list,
+        "found_total": len(videos_all),
+        "already_logged": len(done_all),
+        "scheduled": len(videos_new),
+        "ok_count": len(ok_rows),
+        "fail_count": len(fail_rows),
+        "success_csv": success_csv,
+        "failed_csv": failed_csv,
+        "ok": ok_rows,
+        "failed": fail_rows,
     }
 
 
+# -----------------------------
+# Usage example (no argparse)
+# -----------------------------
 if __name__ == "__main__":
-    video_dir = "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/data/processed/video_files/LAV_DF/video"
-    audio_dir = "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/data/processed/video_files/LAV_DF/audio"
+
     summary = convert_video_dir_to_audio_parallel(
-        video_dir=video_dir,
-        audio_dir=audio_dir,
-        num_workers=4,
+        video_dir=VIDEO_DIR,
+        audio_dir=AUDIO_DIR,
+        log_dir=LOG_DIR,
+        num_workers=6,
+        max_videos=15000,     # cap NEW videos processed this run
+        recursive=False,
     )
 
-    print(summary)
+    print("\n=== SUMMARY ===")
+    for k, v in summary.items():
+        if k in ("ok", "failed"):
+            continue
+        print(f"{k}: {v}")
