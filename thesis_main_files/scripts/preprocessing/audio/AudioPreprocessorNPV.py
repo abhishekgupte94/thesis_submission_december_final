@@ -261,7 +261,7 @@ class AudioPreprocessorNPV:
         Each .pt contains ONLY the mel Tensor (64,96).
         """
         audio_path = Path(audio_path)
-        out_root = Path(out_pt_path)
+        out_root = Path(out_dir)
 
         num_words = 0  # kept for caller compatibility
 
