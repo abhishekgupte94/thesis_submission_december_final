@@ -165,7 +165,7 @@ class OfflineAudioExporter(pl.LightningModule):
             audio_path=audio_input_path,
             clip_id=clip_id,
             segments_sec=segments_sec,
-            out_dir=self.cfg.audio_pt_dir
+            out_pt_path=self.cfg.audio_pt_dir
         )
         num_segments, num_words = out
         return {
