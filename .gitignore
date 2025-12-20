@@ -280,3 +280,9 @@ thesis_main_files/data/processed/splits/train/video/*
 thesis_main_files/data/processed/splits/train/audio/*
 !thesis_main_files/data/processed/splits/train/audio/.gitkeep
 !thesis_main_files/data/processed/splits/train/audio/
+
+thesis_main_files/data/raw/csv/lav_df/metadata/processed/*
+!thesis_main_files/data/raw/csv/lav_df/metadata/processed/.gitkeep
+!thesis_main_files/data/raw/csv/lav_df/metadata/processed/
+
+
