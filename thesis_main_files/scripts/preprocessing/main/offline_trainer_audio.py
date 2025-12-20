@@ -153,6 +153,13 @@ class OfflineAudioExporter(pl.LightningModule):
         audio_input_path = self.cfg.audio_root / f"{clip_id}.wav"
         if not audio_input_path.exists():
             audio_input_path = self.cfg.audio_root / f"{clip_id}.mp3"
+        # [DEBUG - TEMP]
+        import os, inspect
+        print("DEBUG rank:", os.environ.get("LOCAL_RANK") or os.environ.get("RANK"))
+        print("DEBUG AudioPreprocessorNPV class file:", inspect.getfile(self.audio_prep.__class__))
+        print("DEBUG method:", self.audio_prep.process_and_save_from_segments_sec_segmentlocal)
+        print("DEBUG method signature:",
+              inspect.signature(self.audio_prep.process_and_save_from_segments_sec_segmentlocal))
 
         out = self.audio_prep.process_and_save_from_segments_sec_segmentlocal(
             audio_path=audio_input_path,
