@@ -60,35 +60,37 @@ def export_mp4_segments_to_sibling_video_pt_dir(
     if resize_hw is not None:
         import torch.nn.functional as F  # noqa: F401
 
-    # [ADDED] mp4 discovery timing
-    t_scan0 = time.time()
-    mp4s = list(root_dir.rglob("*.mp4"))
-    t_scan1 = time.time()
+    # [MODIFIED] iterator-based discovery (no upfront list(root_dir.rglob(...)))
+    mp4_iter = root_dir.rglob("*.mp4")
 
     print("\n" + "=" * 80)
     print("[export][debug] starting export_mp4_segments_to_sibling_video_pt_dir")
     print(f"[export][debug] root_dir={root_dir}")
-    print(f"[export][debug] scan_time_sec={(t_scan1 - t_scan0):.2f}")
-    print(f"[export][debug] found_mp4s={len(mp4s)}")
     print(f"[export][debug] overwrite={overwrite} resize_hw={resize_hw}")
     if max_files is not None:
         print(f"[export][debug] max_files={max_files}")
     print("=" * 80 + "\n")
 
-    # [ADDED] preview first few mp4 paths
-    if preview_first > 0 and len(mp4s) > 0:
-        print(f"[export][debug] showing first {min(preview_first, len(mp4s))} mp4 paths:")
-        for i, p in enumerate(mp4s[:preview_first], start=1):
-            print(f"  [{i}] {p}")
-        print("")
+    # [ADDED] preview printing state (now prints as discovered)
+    preview_printed = 0
 
-    # [ADDED] optionally cap the workload
-    if max_files is not None:
-        mp4s = mp4s[:max_files]
+    # [MODIFIED] main loop now streams mp4 paths
+    for idx, mp4_path in enumerate(mp4_iter, start=1):
+        # [ADDED] stop early for smoke tests
+        if max_files is not None and idx > max_files:
+            print(f"[export][debug] reached max_files={max_files}, stopping early")
+            break
 
-    # [ADDED] main loop with heartbeat + per-file exception safety
-    for idx, mp4_path in enumerate(mp4s, start=1):
         processed += 1
+
+        # [MODIFIED] preview first few mp4 paths (streaming)
+        if preview_first > 0 and preview_printed < preview_first:
+            preview_printed += 1
+            if preview_printed == 1:
+                print(f"[export][debug] showing first {preview_first} discovered mp4 paths:")
+            print(f"  [{preview_printed}] {mp4_path}")
+            if preview_printed == preview_first:
+                print("")
 
         out_dir = mp4_path.parent / "video_pt"
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -96,12 +98,12 @@ def export_mp4_segments_to_sibling_video_pt_dir(
 
         if out_pt.exists() and not overwrite:
             n_exists_skip += 1
-            # [ADDED] occasional verbose skips
+            # [MODIFIED] no len(mp4s) available in iterator mode
             if debug_every > 0 and (idx % debug_every == 0):
                 elapsed = time.time() - t0
                 rate = idx / elapsed if elapsed > 0 else 0.0
                 print(
-                    f"[export][debug] idx={idx}/{len(mp4s)} "
+                    f"[export][debug] idx={idx} "
                     f"written={written} exists_skip={n_exists_skip} empty_skip={n_empty_skip} read_fail={n_read_fail} "
                     f"elapsed_sec={elapsed:.1f} rate={rate:.2f} files/s "
                     f"(latest skipped exists) out_pt={out_pt}"
@@ -113,7 +115,6 @@ def export_mp4_segments_to_sibling_video_pt_dir(
             frames, _, _ = read_video(str(mp4_path), pts_unit="sec")  # (T,H,W,C)
         except Exception as e:
             n_read_fail += 1
-            # [ADDED] print the failing file immediately
             print(f"[export][ERROR] read_video failed: mp4={mp4_path}")
             print(f"[export][ERROR] exception={type(e).__name__}: {e}")
             continue
@@ -121,7 +122,6 @@ def export_mp4_segments_to_sibling_video_pt_dir(
 
         if frames.numel() == 0:
             n_empty_skip += 1
-            # [ADDED] print occasional empties
             if debug_every > 0 and (idx % debug_every == 0):
                 print(f"[export][warn] empty frames: mp4={mp4_path}")
             continue
@@ -135,18 +135,17 @@ def export_mp4_segments_to_sibling_video_pt_dir(
 
         written += 1
 
-        # [ADDED] heartbeat progress
+        # [MODIFIED] heartbeat progress (no len(mp4s))
         if debug_every > 0 and (idx % debug_every == 0 or idx == 1):
             elapsed = time.time() - t0
             rate = idx / elapsed if elapsed > 0 else 0.0
-            # frames: (T,H,W,C)
             try:
                 T, H, W, C = frames.shape
             except Exception:
                 T = H = W = C = -1
 
             print(
-                f"[export][debug] idx={idx}/{len(mp4s)} "
+                f"[export][debug] idx={idx} "
                 f"written={written} exists_skip={n_exists_skip} empty_skip={n_empty_skip} read_fail={n_read_fail} "
                 f"elapsed_sec={elapsed:.1f} rate={rate:.2f} files/s "
                 f"read_sec={(t_read1 - t_read0):.2f} save_sec={(t_save1 - t_save0):.2f} "
@@ -190,7 +189,6 @@ if __name__ == "__main__":
         help="Overwrite existing .pt files if they already exist.",
     )
 
-    # [ADDED] debug flags
     parser.add_argument(
         "--debug_every",
         type=int,
@@ -212,11 +210,9 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # [MODIFIED] keep your updated repo root logic
     REPO_ROOT = Path(__file__).resolve().parents[2]
     print(f"[export][debug] REPO_ROOT={REPO_ROOT}")
 
-    # [MODIFIED] accept either absolute path or repo-relative path
     file_root_path = Path(args.file_root)
     root_dir = file_root_path if file_root_path.is_absolute() else (REPO_ROOT / file_root_path)
     root_dir = root_dir.resolve()
