@@ -255,7 +255,7 @@ def main() -> None:
 
     trainer = pl.Trainer(
         accelerator="gpu",
-        # devices=args.devices,
+        devices=8,
         strategy="ddp",
         precision=args.precision,
         logger=False,
