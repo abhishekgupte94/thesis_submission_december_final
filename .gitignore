@@ -272,3 +272,11 @@ thesis_main_files/data/processed/video_files/DFDC/audio/*
 thesis_main_files/data/processed/video_files/DFDC/video/*
 !thesis_main_files/data/processed/video_files/DFDC/video/.gitkeep
 !thesis_main_files/data/processed/video_files/DFDC/video/
+
+thesis_main_files/data/processed/splits/train/video/*
+!thesis_main_files/data/processed/splits/train/video/.gitkeep
+!thesis_main_files/data/processed/splits/train/video/
+
+thesis_main_files/data/processed/splits/train/audio/*
+!thesis_main_files/data/processed/splits/train/audio/.gitkeep
+!thesis_main_files/data/processed/splits/train/audio/
