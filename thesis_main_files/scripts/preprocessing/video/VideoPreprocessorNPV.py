@@ -414,17 +414,13 @@ class VideoPreprocessorNPV:
             # [ADDED] Save segment as uint8 tensor in required format:
             #         "video_u8_cthw": (3, T, H, W), uint8
             # -------------------------------
+            # -------------------------------
+            # [PATCHED] Save segment as tensor-only uint8 (3,T,H,W)
+            # -------------------------------
             if len(crops) > 0:
                 video_u8_cthw = _crops_to_uint8_cthw(crops)  # (3,T,H,W) uint8
                 seg_pt_path = seg_dir / f"seg_{seg_idx:04d}.pt"
-                torch.save(
-                    {
-                        "video_u8_cthw": video_u8_cthw,
-                        "segment_index": seg_idx,
-                        "num_frames": int(video_u8_cthw.shape[1]),  # T
-                    },
-                    seg_pt_path,
-                )
+                torch.save(video_u8_cthw, seg_pt_path)
 
         if out_pt_path is not None:
             out_pt_path = Path(out_pt_path)

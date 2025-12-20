@@ -194,10 +194,16 @@ class SegmentDataset(Dataset):
         if mel.dtype != torch.float32:
             mel = mel.float()
 
+        # ------------------------------------------------------------
+        # [PATCHED] Load video as tensor-only payload (no dict key access)
+        # Expect: torch.Tensor uint8 (3, T, H, W)
+        # ------------------------------------------------------------
         video_u8 = torch.load(v_pt, map_location="cpu")
+
         if not isinstance(video_u8, torch.Tensor) or video_u8.ndim != 4 or video_u8.shape[0] != 3:
             raise ValueError(
-                f"Expected video (3,T,H,W) Tensor at {v_pt}, got {type(video_u8)} {getattr(video_u8, 'shape', None)}")
+                f"Expected video (3,T,H,W) Tensor at {v_pt}, got {type(video_u8)} {getattr(video_u8, 'shape', None)}"
+            )
         if video_u8.dtype != torch.uint8:
             video_u8 = video_u8.to(torch.uint8)
 
