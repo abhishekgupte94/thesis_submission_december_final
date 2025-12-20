@@ -254,11 +254,13 @@ def main() -> None:
     model = OfflineAudioExporter(cfg)
 
     trainer = pl.Trainer(
-        accelerator="auto",
-        devices="auto",
+        accelerator="gpu",
+        devices=args.devices,
+        strategy="ddp",
+        precision=args.precision,
         logger=False,
         enable_checkpointing=False,
-        precision=args.precision,
+        enable_progress_bar=True,
     )
     trainer.predict(model, datamodule=dm)
 
