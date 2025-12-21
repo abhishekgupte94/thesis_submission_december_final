@@ -283,9 +283,9 @@ def main() -> None:
     # -------------------------------------------------------------------------
     # Import YOUR audio preprocessor (unchanged)
     # -------------------------------------------------------------------------
-    from scripts.preprocessing.audio.AudioPreprocessorNPV import AudioPreprocessorNPV
-
-    preprocessor = AudioPreprocessorNPV()
+    from scripts.preprocessing.audio.AudioPreprocessorNPV import AudioPreprocessorNPV, AudioPreprocessorNPVConfig
+    cfg = AudioPreprocessorNPVConfig()
+    preprocessor = AudioPreprocessorNPV(cfg = cfg)
     mel = preprocessor.process_audio_file(audio_path)
 
     if not isinstance(mel, torch.Tensor) or mel.ndim != 2:

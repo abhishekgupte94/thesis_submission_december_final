@@ -41,7 +41,7 @@ def main():
     model.train()
 
     # Tiny input: (B, C, T, H, W)
-    x = torch.randn(1, 3, 8, 64, 64, dtype=torch.float32, requires_grad=True)
+    x = torch.randn(1, 3, 8, 224, 224, dtype=torch.float32, requires_grad=True)
 
     y = model.forward(x)
     print(f"[OK] forward output shape: {tuple(y.shape)}")
