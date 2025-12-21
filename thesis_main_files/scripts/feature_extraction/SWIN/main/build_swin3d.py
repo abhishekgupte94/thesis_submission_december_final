@@ -56,15 +56,51 @@ def _get_project_root(anchor: Optional[Path] = None) -> Path:
 # --------------------------------------------------------------------------------------
 def _ensure_vst_on_syspath() -> None:
     """
-    Ensures Video-Swin-Transformer repo root is on sys.path so that
-    `mmaction.models.backbones.swin_transformer` is imported in package context.
+    Ensures the directory that *contains* `mmaction/` is on sys.path.
+    Robust against repo folder name differences.
     """
-    project_root = _get_project_root()
-    vst_root = project_root / "external" / "Video-Swin-Transformer"
+    anchor = Path(__file__).resolve()
+
+    # Walk up to find thesis_main_files
+    project_root = None
+    for p in [anchor, *anchor.parents]:
+        if p.name == "thesis_main_files":
+            project_root = p
+            break
+    if project_root is None:
+        raise RuntimeError("Could not locate project root folder named 'thesis_main_files'.")
+
+    external = project_root / "external"
+    if not external.exists():
+        raise RuntimeError(f"Expected external/ folder not found at: {external}")
+
+    # Find a directory under external/ that contains mmaction/
+    candidates = [
+        external / "Video-Swin-Transformer",
+        external / "VideoSwinTransformer",
+        external / "video-swin-transformer",
+    ]
+
+    vst_root = None
+    for c in candidates:
+        if (c / "mmaction").exists():
+            vst_root = c
+            break
+
+    if vst_root is None:
+        # fallback: search one level deep
+        for c in external.iterdir():
+            if c.is_dir() and (c / "mmaction").exists():
+                vst_root = c
+                break
+
+    if vst_root is None:
+        raise RuntimeError(f"Could not find a VST repo containing mmaction/ under: {external}")
 
     vst_root_str = str(vst_root)
     if vst_root_str not in sys.path:
         sys.path.insert(0, vst_root_str)
+
 
 
 class Swin3DFeatureAdapter(nn.Module):
