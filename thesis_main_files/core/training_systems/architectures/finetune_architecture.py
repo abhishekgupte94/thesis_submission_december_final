@@ -43,8 +43,11 @@ from scripts.feature_extraction.token_unifier_post_swin.token_unifier_post_swin 
 # ============================================================
 # [KEPT] VACL wrapper import
 # ============================================================
-from core.NPVForensics.VACL_block.main.vacl_wrapper import VACLWrapper
-
+from core.NPVForensics.VACL_block.main.vacl_wrapper_fine_tune import VACLWrapper
+from core.NPVForensics.common_projection.main.common_projection_head_module_wrapper import (
+    FaceAudioCommonSpaceWrapper
+    # FaceAudioCommonProjectionConfig,
+)
 
 @dataclass
 class FinetuneArchitectureConfig:
@@ -60,6 +63,7 @@ class FinetuneArchitectureConfig:
     # ------------------------------------------------------------
     compute_infonce: bool = True
     return_intermediates: bool = False
+    cpe_d_common: int = 512
 
     # ------------------------------------------------------------
     # [ADDED] Future hook toggles
@@ -89,6 +93,8 @@ class VACLFinetuneArchitecture(nn.Module):
         # ============================================================
         # [KEPT] Pre-VACL token unifier
         # ============================================================
+
+        ## TOKENIZER NEEDS TO BE FROZEN IN THE FINE TUNE ARCHITECTURE
         self.pre_vacl_unifier = PreVACLTokenUnifier(
             c_v_in=c_v_in,
             c_a_in=c_a_in,
@@ -107,13 +113,27 @@ class VACLFinetuneArchitecture(nn.Module):
         # [KEPT] VACL wrapper
         # IMPORTANT: return_intermediates is controlled via forward(...)
         # ============================================================
-        self.vacl = VACLWrapper(return_intermediates=False)
+        ### CONFIG NEEDS TO BE ADDED LIKE pretrain_architecture.py
 
+        self.vacl = self.vacl = VACLWrapper(
+            vacl_kwargs=dict(
+                d_v=cfg.vacl_d_v,
+                d_a=cfg.vacl_d_a,
+                seq_len=cfg.vacl_s_out,
+                k=128,),
+            return_intermediates=False)
+        cpe = FaceAudioCommonSpaceWrapper(
+            d_a=768,  # audio feature dimension
+            d_f=256,  # face / video feature dimension
+            d_common=512,  # shared embedding dimension
+            tau=0.07,  # temperature for InfoNCE
+            loss_weight=1.0
+        )
         # ============================================================
         # [ADDED] Placeholder container for future feature adapter
         # (kept as Identity so it never breaks; you can replace later)
         # ============================================================
-        self._new_feat_adapter = nn.Identity()
+        # self._new_feat_adapter = nn.Identity()
 
     # ============================================================
     # [ADDED][STUB-IN] New features hook from VACL wrapper
@@ -129,24 +149,6 @@ class VACLFinetuneArchitecture(nn.Module):
     #   - Change this function to read the correct keys from vacl_out
     #   - Return a tensor or dict of tensors, then consume them downstream
     # ============================================================
-    def _extract_new_vacl_features_stub(self, vacl_out: Dict[str, Any]) -> Optional[Any]:
-        if not bool(self.cfg.enable_new_vacl_features):
-            return None
-
-        # ------------------------------------------------------------
-        # [STUB] Replace this with your real keys once you paste the new VACL wrapper
-        #
-        # Example patterns (DO NOT assume; placeholders only):
-        #   feat = vacl_out["F_new"]                      # tensor
-        #   feat = {"F": vacl_out["F"], "G": vacl_out["G"]}  # dict of tensors
-        # ------------------------------------------------------------
-        feat = None  # <-- keep None until the new wrapper keys are known
-
-        # [STUB] Optional adaptation layer if you need shape/channel adjustment later
-        if feat is not None:
-            feat = self._new_feat_adapter(feat)
-
-        return feat
 
     def forward(
         self,
@@ -187,14 +189,20 @@ class VACLFinetuneArchitecture(nn.Module):
         vacl_out = self.vacl(
             X_v=X_v,
             X_a=X_a,
-            compute_infonce=compute_infonce,
+            # compute_infonce=compute_infonce,
+            return_intermediates=return_intermediates,
+        )
+        cpe_out = self.common_proj(
+            X_v=X_v,
+            X_a=X_a,
+            # compute_infonce=compute_infonce,
             return_intermediates=return_intermediates,
         )
 
         # ============================================================
         # [ADDED][STUB-IN] new features from vacl_wrapper (non-breaking)
         # ============================================================
-        new_vacl_features = self._extract_new_vacl_features_stub(vacl_out)
+        # new_vacl_features = self._extract_new_vacl_features_stub(vacl_out)
 
         # ============================================================
         # [PATCHED] Stage-2 standardized outputs
@@ -218,34 +226,25 @@ class VACLFinetuneArchitecture(nn.Module):
         # ------------------------------------------------------------
         # [REQUIRED] Correlation loss
         # ------------------------------------------------------------
-        L_cor = vacl_out.get("L_cor", vacl_out.get("L_corr", vacl_out.get("loss_cor", None)))
+        L_cor = vacl_out.get("loss_vacl")
         if L_cor is None:
             raise KeyError(
                 "[VACLFinetuneArchitecture] VACL output missing correlation loss. "
                 "Expected key: 'L_cor' (or compatible alias)."
             )
 
-        # ------------------------------------------------------------
-        # [REQUIRED] InfoNCE
-        # ------------------------------------------------------------
-        l_infonce = vacl_out.get("l_infonce", vacl_out.get("loss_infonce", vacl_out.get("loss_nce", None)))
-        if l_infonce is None:
-            # NOTE: your system_fine.py requires l_infonce, so we hard-fail here.
-            raise KeyError(
-                "[VACLFinetuneArchitecture] VACL output missing InfoNCE scalar. "
-                "Expected key: 'l_infonce' (or compatible alias)."
-            )
+        loss_cpe = cpe_out.get("loss_cpe", cpe_out.get("loss", None))
 
         out["X_v_att"] = X_v_att
         out["X_a_att"] = X_a_att
         out["L_cor"] = L_cor
-        out["l_infonce"] = l_infonce
+        out["l_infonce"] = loss_cpe
 
         # ------------------------------------------------------------
         # [ADDED] Optional: keep the new features around for later trainer/head usage
         # This does NOT affect current training because the system ignores this key.
         # ------------------------------------------------------------
-        if new_vacl_features is not None:
-            out["new_vacl_features"] = new_vacl_features
+        # if new_vacl_features is not None:
+        #     out["new_vacl_features"] = new_vacl_features
 
         return out

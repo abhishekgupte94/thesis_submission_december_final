@@ -54,6 +54,7 @@ class ArchitectureConfig:
     vacl_d_v: int = 256
     vacl_d_a: int = 768
 
+    cpe_d_common: int = 512
     compute_infonce: bool = True
     return_intermediates: bool = False
 
@@ -104,17 +105,17 @@ class AVPretrainArchitecture(nn.Module):
                 d_v=cfg.vacl_d_v,
                 d_a=cfg.vacl_d_a,
                 seq_len=cfg.vacl_s_out,
-                k=128,),
+                k=64,),
             return_intermediates=False
         )
 
         # ============================================================
         # [KEPT] Common projection (CPE)
         # ============================================================
-        cpe = FaceAudioCommonSpaceWrapper(
-            d_a=768,  # audio feature dimension
-            d_f=256,  # face / video feature dimension
-            d_common=512,  # shared embedding dimension
+        self.common_proj = FaceAudioCommonSpaceWrapper(
+            d_a=cfg.vacl_d_a,  # audio feature dimension
+            d_f=cfg.vacl_d_a,  # face / video feature dimension
+            d_common=cfg.cpe_d_common,  # shared embedding dimension
             tau=0.07,  # temperature for InfoNCE
             loss_weight=1.0
         )
@@ -164,7 +165,7 @@ class AVPretrainArchitecture(nn.Module):
         cpe_out = self.common_proj(
             X_v=X_v,
             X_a=X_a,
-            compute_infonce=compute_infonce,
+            # compute_infonce=compute_infonce,
             return_intermediates=return_intermediates,
         )
 
@@ -173,8 +174,8 @@ class AVPretrainArchitecture(nn.Module):
         # ============================================================
         out: Dict[str, Any] = {}
 
-        loss_vacl = vacl_out.get("loss_vacl", vacl_out.get("loss", None))
-        loss_cpe = cpe_out.get("loss_cpe", cpe_out.get("loss", None))
+        loss_vacl = vacl_out.get("loss_vacl")
+        loss_cpe = cpe_out.get("loss_cpe")
 
         out["loss_vacl"] = loss_vacl
         out["loss_cpe"] = loss_cpe

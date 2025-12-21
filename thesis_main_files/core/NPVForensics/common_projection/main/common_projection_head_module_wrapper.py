@@ -160,7 +160,7 @@ class FaceAudioCommonSpaceWrapper(nn.Module):
         out: Dict[str, torch.Tensor] = {
             # "L_info": L_info
             # "loss_cpe": L_info,
-            "loss": L_info
+            "loss_cpe": L_info
         }
 
         # ====================================================

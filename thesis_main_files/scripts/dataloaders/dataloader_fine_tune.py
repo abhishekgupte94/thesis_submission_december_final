@@ -240,13 +240,11 @@ class SegmentDataset(Dataset):
 
         return {
             "audio": mel_96,            # BACKCOMPAT
-            "audio_96": mel_96,         # STAGE-2
             "audio_2048": mel_2048,     # STAGE-2
             "video_u8_cthw": video,     # CRITICAL
             "T_video": T_video,
             "y": y,
         }
-
 
 # ============================================================
 # Padding helpers
@@ -275,17 +273,29 @@ def collate_segments_bucket_pad(items: List[Dict[str, object]]) -> Dict[str, obj
     aud96 = torch.stack([_pad_mel(it["audio_96"], T_a96) for it in items])
     aud2048 = torch.stack([_pad_mel(it["audio_2048"], T_a2048) for it in items])
 
+    # ------------------------------------------------------------
+    # [PATCH] Batch labels + binary one-hot
+    #   - y:       (B,)   torch.long (class index 0/1)
+    #   - y_onehot:(B,2)  torch.float32
+    # ------------------------------------------------------------
     y_list = [it["y"] for it in items]
     if all(y is None for y in y_list):
         y_tensor = None
         y_onehot = None
     else:
-        y_tensor = torch.tensor([y if y is not None else 0 for y in y_list])
-        y_onehot = _one_hot_2(y_tensor)
+        # indices must be long for scatter / CE-style usage
+        y_tensor = torch.tensor(
+            [0 if y is None else int(y) for y in y_list],
+            dtype=torch.long,
+        )
+
+        # one-hot should be float for BCE/BCEWithLogits-style usage
+        y_onehot = torch.zeros((y_tensor.numel(), 2), dtype=torch.float32)
+        y_onehot.scatter_(1, y_tensor.view(-1, 1), 1.0)
+
 
     return {
         "audio": aud96,               # BACKCOMPAT
-        "audio_96": aud96,
         "audio_2048": aud2048,
         "video_u8_cthw": videos,      # CRITICAL
         "video": videos,              # ALIAS

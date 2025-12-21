@@ -30,12 +30,12 @@ from lightning.pytorch.loggers import TensorBoardLogger
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-from scripts.dataloaders.dataloader import SegmentDataModule
+from scripts.dataloaders.dataloader_fine_tune import SegmentDataModule
 
 # ============================================================
 # [MODIFIED] Import renamed system file
 # ============================================================
-from core.training_systems.training_systems.system_fine import AVPretrainSystem
+from core.training_systems.training_systems.system_finetune import AVPretrainSystem
 
 from scripts.feature_extraction.SWIN.main.MAIN_swin2d_wrapper import (
     Swin2DAudioBackboneWrapper,
@@ -48,7 +48,7 @@ from scripts.feature_extraction.SWIN.main.build_swin3d import BuildSwin3DConfig
 # [NOTE] You must point this to your real finetune architecture module
 # It must return: X_v_att, X_a_att, L_cor, l_infonce
 # ============================================================
-from core.training_systems.architectures.vacl_finetune_arch import VACLFinetuneArchitecture
+from core.NPVForensics.VACL_block.main.vacl_wrapper_fine_tune import VACLWrapper,VACLWrapperConfig
 
 
 # ============================================================

@@ -40,6 +40,7 @@ from core.training_systems.architectures.final_classifier_module import (
     bce_paper_eq18,
 )
 
+from scripts.dataloaders.dataloader_fine_tune import SegmentDataModuleFineTune
 # ============================================================
 # [ADDED] Metrics (DDP-safe)
 # Notes:
@@ -259,7 +260,7 @@ class AVPretrainSystem(pl.LightningModule):
     def training_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
         out = self.model(
             video_in=batch["video"],
-            audio_in=batch["audio"].unsqueeze(1),
+            audio_in=batch["audio"]
         )
 
         # ------------------------------------------------------------
@@ -285,15 +286,9 @@ class AVPretrainSystem(pl.LightningModule):
         y_onehot = batch.get("y_onehot", batch.get("label_onehot"))
         y_class = batch.get("y", batch.get("label"))
 
-        if y_onehot is None:
-            if y_class is None:
-                raise KeyError("[AVPretrainSystem] Missing labels: provide y/label or y_onehot/label_onehot.")
-            y_class = y_class.long()
-            y_onehot = torch.zeros((y_class.size(0), 2), device=y_class.device, dtype=P.dtype)
-            y_onehot.scatter_(1, y_class[:, None], 1.0)
-        else:
-            y_onehot = y_onehot.to(device=P.device, dtype=P.dtype)
-            y_class = y_onehot.argmax(dim=1).long()
+
+        y_onehot = y_onehot.to(device=P.device, dtype=P.dtype)
+
 
         # ============================================================
         # [ACTIVE] Paper Eq.18 BCE on probabilities
@@ -306,6 +301,7 @@ class AVPretrainSystem(pl.LightningModule):
         # If enabled later, replace L_cls to avoid double counting.
         # ============================================================
         if self._USE_LOGITS_LOSS:
+            y_class = batch["y_one_hot"].long()
             L_cls = torch.nn.functional.cross_entropy(logits, y_class)
 
         # ============================================================
@@ -354,7 +350,7 @@ class AVPretrainSystem(pl.LightningModule):
     def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
         out = self.model(
             video_in=batch["video"],
-            audio_in=batch["audio"].unsqueeze(1),
+            audio_in=batch["audio"],
         )
 
         X_v_att = out["X_v_att"]
@@ -369,15 +365,7 @@ class AVPretrainSystem(pl.LightningModule):
         y_onehot = batch.get("y_onehot", batch.get("label_onehot"))
         y_class = batch.get("y", batch.get("label"))
 
-        if y_onehot is None:
-            if y_class is None:
-                raise KeyError("[AVPretrainSystem] Missing labels: provide y/label or y_onehot/label_onehot.")
-            y_class = y_class.long()
-            y_onehot = torch.zeros((y_class.size(0), 2), device=y_class.device, dtype=P.dtype)
-            y_onehot.scatter_(1, y_class[:, None], 1.0)
-        else:
-            y_onehot = y_onehot.to(device=P.device, dtype=P.dtype)
-            y_class = y_onehot.argmax(dim=1).long()
+
 
         L_bce = bce_paper_eq18(P, y_onehot)
         L_cls = L_bce
@@ -496,6 +484,7 @@ def _run_one(args: argparse.Namespace, exp_name_suffix: str = "") -> float:
     )
 
     # Swin2D (audio) - frozen
+
     audio_backbone = Swin2DAudioBackboneWrapper(Swin2DAudioWrapperConfig())
     audio_backbone.requires_grad_(False)
     audio_backbone.eval()
@@ -666,7 +655,7 @@ def main() -> None:
 
     logger = TensorBoardLogger(save_dir=str(tb_logdir), name=args.run_name)
 
-    dm = SegmentDataModule(
+    dm = SegmentDataModuleFineTune(
         offline_root=offline_root,
         batch_name=args.batch_name,
         batch_size=args.batch_size,
@@ -677,8 +666,8 @@ def main() -> None:
         drop_last=True,
         map_location="cpu",
         seed=123,
-        val_split=float(args.val_split),
-        val_batch_size=args.batch_size,
+        val_split=float(args.val_split)
+        # batch_size=args.batch_size,
     )
 
     audio_backbone = Swin2DAudioBackboneWrapper(Swin2DAudioWrapperConfig())
@@ -690,7 +679,7 @@ def main() -> None:
     video_backbone.requires_grad_(False)
     video_backbone.eval()
 
-    model = VACLFinetuneArchitecture(
+    model = AVPretrainSystem(
         video_backbone=video_backbone,
         audio_backbone=audio_backbone,
     )

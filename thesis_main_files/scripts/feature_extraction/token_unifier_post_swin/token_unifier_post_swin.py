@@ -34,7 +34,7 @@ import torch.nn as nn
 class TokenUnifierForVACLConfig:
     s_out: int = 64
     d_v: int = 256
-    d_a: int = 256
+    d_a: int = 768
     n_heads: int = 4
     attn_dropout: float = 0.0
     proj_dropout: float = 0.0
@@ -183,7 +183,8 @@ class PreVACLTokenUnifier(nn.Module):
         self,
         video_feat_3d: torch.Tensor,
         audio_tokens: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, Any]]:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+
 
         # ---- flatten video tokens
         v_tokens = self.flatten_video(video_feat_3d)   # (B, S3D, C_v)
@@ -201,14 +202,14 @@ class PreVACLTokenUnifier(nn.Module):
         X_v = Zv.transpose(1, 2).contiguous()  # (B, d_v, S_out)
         X_a = Za.transpose(1, 2).contiguous()  # (B, d_a, S_out)
 
-        aux = {
-            "video_in": tuple(video_feat_3d.shape),
-            "audio_in": tuple(audio_tokens.shape),
-            "S3D_in": int(v_tokens.shape[1]),
-            "Sa_in": int(audio_tokens.shape[1]),
-            "S_out": int(self.cfg.s_out),
-            "d_v": int(self.cfg.d_v),
-            "d_a": int(self.cfg.d_a),
-        }
+        # aux = {
+        #     "video_in": tuple(video_feat_3d.shape),
+        #     "audio_in": tuple(audio_tokens.shape),
+        #     "S3D_in": int(v_tokens.shape[1]),
+        #     "Sa_in": int(audio_tokens.shape[1]),
+        #     "S_out": int(self.cfg.s_out),
+        #     "d_v": int(self.cfg.d_v),
+        #     "d_a": int(self.cfg.d_a),
+        # }
 
-        return X_v, X_a
+        return X_v,X_a

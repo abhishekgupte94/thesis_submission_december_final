@@ -65,49 +65,40 @@ def _probe_num_frames_mp4_ffprobe(mp4_path: Path) -> Optional[int]:
 
 
 def _read_mp4_to_u8_cthw(mp4_path: Path) -> torch.Tensor:
-    """Decode MP4 to uint8 RGB tensor (3, T, H, W).
+    """Decode MP4 to uint8 RGB tensor (3, T, H, W) using torchvision only.
 
-    Prefers torchvision (FFmpeg backend) if available; falls back to OpenCV.
+    - Returns: torch.uint8 (3,T,H,W) RGB
+    - Raises: RuntimeError if decode fails (no OpenCV fallback).
     """
-    # Try torchvision first (usually available in PyTorch video pipelines)
     try:
         from torchvision.io import read_video  # type: ignore
-
-        # video: (T, H, W, C) in RGB, uint8 (most common); audio ignored
-        video_thwc, _, _ = read_video(str(mp4_path), pts_unit="sec")
-        if not isinstance(video_thwc, torch.Tensor) or video_thwc.ndim != 4 or video_thwc.shape[-1] != 3:
-            raise RuntimeError(f"torchvision.read_video returned unexpected video tensor for {mp4_path}")
-        video_u8_cthw = video_thwc.to(torch.uint8).permute(3, 0, 1, 2).contiguous()  # (3,T,H,W)
-        return video_u8_cthw
-    except Exception:
-        pass
-
-    # Fallback: OpenCV (BGR) -> convert to RGB -> tensor
-    try:
-        import cv2  # type: ignore
-        import numpy as np  # type: ignore
-
-        cap = cv2.VideoCapture(str(mp4_path))
-        if not cap.isOpened():
-            raise RuntimeError(f"OpenCV could not open video: {mp4_path}")
-
-        frames: List[np.ndarray] = []
-        while True:
-            ok, frame_bgr = cap.read()
-            if not ok:
-                break
-            frames.append(frame_bgr)
-        cap.release()
-
-        if len(frames) == 0:
-            raise RuntimeError(f"No frames decoded from: {mp4_path}")
-
-        # (T,H,W,C) uint8, convert BGR->RGB
-        video_thwc = np.stack(frames, axis=0)[:, :, :, ::-1]
-        video_u8_cthw = torch.from_numpy(video_thwc).to(torch.uint8).permute(3, 0, 1, 2).contiguous()
-        return video_u8_cthw
     except Exception as e:
-        raise RuntimeError(f"Failed to decode mp4: {mp4_path} (torchvision+opencv both failed): {e}")
+        raise RuntimeError(
+            f"torchvision.io.read_video is not available. "
+            f"Cannot decode mp4 without fallback. mp4={mp4_path} err={e}"
+        )
+
+    try:
+        # video: (T, H, W, C) RGB (most common), audio ignored
+        video_thwc, _, _ = read_video(str(mp4_path), pts_unit="sec")
+
+        if not isinstance(video_thwc, torch.Tensor):
+            raise RuntimeError(f"read_video returned non-tensor: {type(video_thwc)}")
+
+        if video_thwc.ndim != 4 or video_thwc.shape[-1] != 3:
+            raise RuntimeError(f"read_video returned unexpected shape: {tuple(video_thwc.shape)}")
+
+        # Ensure deterministic dtype + layout expected downstream
+        video_u8_cthw = (
+            video_thwc.to(torch.uint8)
+            .permute(3, 0, 1, 2)
+            .contiguous()
+        )  # (3,T,H,W)
+
+        return video_u8_cthw
+
+    except Exception as e:
+        raise RuntimeError(f"Failed to decode mp4 with torchvision.read_video: {mp4_path} err={e}")
 
 
 _AUDIO_RE = re.compile(r"^(?P<clip>.+)_(?P<idx>\d{4})\.pt$")
@@ -345,8 +336,23 @@ def collate_pad(batch: List[Dict[str, object]]) -> Dict[str, object]:
     max_Ta = max(int(a.shape[1]) for a in audios)
     max_Tv = max(int(v.shape[1]) for v in videos)
 
-    audios_pad = torch.stack([_pad_audio(a, max_Ta) for a in audios], dim=0)   # (B, n_mels, T_a)
-    videos_pad = torch.stack([_pad_video_u8(v, max_Tv) for v in videos], dim=0)  # (B,3,T_v,H,W)
+    B = len(batch)
+
+    # ---------- audio ----------
+    n_mels = audios[0].shape[0]
+    audios_pad = torch.zeros((B, n_mels, max_Ta), dtype=audios[0].dtype)
+
+    for i, a in enumerate(audios):
+        t = min(a.shape[1], max_Ta)
+        audios_pad[i, :, :t] = a[:, :t]
+
+    # ---------- video ----------
+    _, _, H, W = videos[0].shape
+    videos_pad = torch.zeros((B, 3, max_Tv, H, W), dtype=torch.uint8)
+
+    for i, v in enumerate(videos):
+        t = min(v.shape[1], max_Tv)
+        videos_pad[i, :, :t] = v[:, :t]
 
     return {
         "clip_id": clip_ids,

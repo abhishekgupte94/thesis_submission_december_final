@@ -132,8 +132,8 @@ class VACLWrapper(nn.Module):
                 z = vacl_out.new_zeros(())
                 return {
                     "loss_vacl": vacl_out,
-                    "loss": vacl_out,
-                    "L_cor": vacl_out
+                    # "loss": vacl_out,
+                    # "L_cor": vacl_out
                     # "l_infonce": z,
                 }
             raise TypeError(f"VACLVA returned unexpected type: {type(vacl_out)}")

@@ -176,7 +176,7 @@ class VACLWrapper(nn.Module):
             )
 
         out["loss_vacl"] = loss
-        out["loss"] = loss  # alias, useful for generic callers
+        # out["loss"] = loss  # alias, useful for generic callers
 
         # ============================================================
         # [ADDED] Strip heavy intermediates by default (memory-friendly)

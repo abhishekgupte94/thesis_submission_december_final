@@ -132,7 +132,7 @@ class AVPretrainSystem(pl.LightningModule):
         if torch.cuda.is_available() and getattr(self, "global_rank", 0) == 0 and batch_idx == 0:
             torch.cuda.reset_peak_memory_stats()
 
-        audio = batch["audio"].unsqueeze(1)  # (B,1,n_mels,T)
+        audio = batch["audio"]
         video = batch["video"]               # (B,3,T,H,W)
 
         out = self.model(video_in=video, audio_in=audio)
@@ -144,17 +144,17 @@ class AVPretrainSystem(pl.LightningModule):
             self.log("train/loss_vacl", out["loss_vacl"], on_step=True, on_epoch=True, sync_dist=True)
 
         # [ADDED] CPE raw + weighted InfoNCE logs (if present)
-        if "loss_cpe_infonce" in out and out["loss_cpe_infonce"] is not None:
-            self.log("train/loss_cpe_infonce", out["loss_cpe_infonce"], on_step=True, on_epoch=True, sync_dist=True)
-        if "loss_cpe_infonce_weighted" in out and out["loss_cpe_infonce_weighted"] is not None:
-            # [BUGFIX] previously referenced a broken key
-            self.log(
-                "train/loss_cpe_infonce_weighted",
-                out["loss_cpe_infonce_weighted"],
-                on_step=True,
-                on_epoch=True,
-                sync_dist=True,
-            )
+        if "loss_cpe" in out and out["loss_cpe"] is not None:
+            self.log("train/loss_cpe", out["loss_cpe"], on_step=True, on_epoch=True, sync_dist=True)
+        # if "loss_cpe_infonce_weighted" in out and out["loss_cpe_infonce_weighted"] is not None:
+        #     # [BUGFIX] previously referenced a broken key
+        #     self.log(
+        #         "train/loss_cpe_infonce_weighted",
+        #         out["loss_cpe_infonce_weighted"],
+        #         on_step=True,
+        #         on_epoch=True,
+        #         sync_dist=True,
+        #     )
 
         # [ADDED] VRAM stats (controlled by self.mem_log_every; 0 disables)
         self._maybe_log_cuda_mem(prefix="train", every_n_steps=int(getattr(self, "mem_log_every", 0)))
@@ -166,7 +166,7 @@ class AVPretrainSystem(pl.LightningModule):
     # [ADDED] Validation step (SSL)
     # ============================================================
     def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
-        audio = batch["audio"].unsqueeze(1)
+        audio = batch["audio"]
         video = batch["video"]
 
         out = self.model(video_in=video, audio_in=audio)
@@ -177,11 +177,9 @@ class AVPretrainSystem(pl.LightningModule):
         if "loss_vacl" in out and out["loss_vacl"] is not None:
             self.log("val/loss_vacl", out["loss_vacl"], on_step=False, on_epoch=True, sync_dist=True)
 
-        if "loss_cpe_infonce" in out and out["loss_cpe_infonce"] is not None:
-            self.log("val/loss_cpe_infonce", out["loss_cpe_infonce"], on_step=False, on_epoch=True, sync_dist=True)
+        if "loss_cpe" in out and out["loss_cpe"] is not None:
+            self.log("val/loss_cpe_infonce", out["loss_cpe"], on_step=False, on_epoch=True, sync_dist=True)
 
-        if "loss_cpe_infonce_weighted" in out and out["loss_cpe_infonce_weighted"] is not None:
-            self.log("val/loss_cpe_infonce_weighted", out["loss_cpe_infonce_weighted"], on_step=False, on_epoch=True, sync_dist=True)
 
         # [ADDED] VRAM stats (controlled by self.mem_log_every; 0 disables)
         self._maybe_log_cuda_mem(prefix="val", every_n_steps=int(getattr(self, "mem_log_every", 0)))
