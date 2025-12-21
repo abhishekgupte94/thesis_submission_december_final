@@ -234,7 +234,9 @@ class VACLVA(nn.Module):
 
         out: Dict[str, torch.Tensor] = {
             "X_va": X_va,
-            "L_cor": L_cor
+            "L_cor": L_cor,
+            "X_v_att": X_v_att,
+            "X_a_att": X_a_att
             # "Loss_va": Loss_va,
         }
 
