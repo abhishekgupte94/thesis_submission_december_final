@@ -111,7 +111,7 @@ class VACLWrapper(nn.Module):
             vacl_out = self.vacl(
                 X_v=X_v,
                 X_a=X_a,
-                compute_infonce=bool(compute_infonce),  # [PATCHED] enable if supported
+                # compute_infonce=bool(compute_infonce),  # [PATCHED] enable if supported
                 return_intermediates=bool(return_intermediates),
                 **kwargs,
             )
@@ -133,8 +133,8 @@ class VACLWrapper(nn.Module):
                 return {
                     "loss_vacl": vacl_out,
                     "loss": vacl_out,
-                    "L_cor": vacl_out,
-                    "l_infonce": z,
+                    "L_cor": vacl_out
+                    # "l_infonce": z,
                 }
             raise TypeError(f"VACLVA returned unexpected type: {type(vacl_out)}")
 
