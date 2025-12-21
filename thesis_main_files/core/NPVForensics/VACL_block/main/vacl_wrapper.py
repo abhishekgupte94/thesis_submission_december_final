@@ -59,11 +59,19 @@ class VACLWrapper(nn.Module):
         return_intermediates: Optional[bool] = None,
         strip_intermediates: Optional[bool] = None,
         expect_bds: Optional[bool] = None,
+        **unused_kwargs,
     ) -> None:
         super().__init__()
 
         self.cfg = cfg or VACLWrapperConfig()
-
+        vacl_kwargs = dict(vacl_kwargs or {})
+        required = ("d_v", "d_a", "seq_len", "k")
+        missing = [k for k in required if k not in vacl_kwargs]
+        if missing:
+            raise ValueError(
+                f"VACLWrapper: vacl_kwargs missing required keys: {missing}. "
+                f"Got keys={list(vacl_kwargs.keys())}"
+            )
         # [ADDED] Allow override without forcing you to build a dataclass
         if return_intermediates is not None:
             self.cfg.return_intermediates = bool(return_intermediates)
@@ -73,11 +81,7 @@ class VACLWrapper(nn.Module):
             self.cfg.expect_bds = bool(expect_bds)
 
         # [MODIFIED] Build underlying VACLVA once (DDP-safe)
-        if vacl is not None:
-            self.vacl = vacl
-        else:
-            vacl_kwargs = vacl_kwargs or {}
-            self.vacl = VACLVA(**vacl_kwargs)
+        self.vacl = VACLVA(**vacl_kwargs)
 
     # ============================================================
     # [ADDED] Shape adapter: normalize to what your VACLVA expects
