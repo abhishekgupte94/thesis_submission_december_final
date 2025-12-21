@@ -5,6 +5,12 @@
 #   - train_dataloader + val_dataloader
 #   - Bucketing sampler for TRAIN only
 #   - Simple sequential batches for VAL (stable, no shuffle)
+#
+# [ADDED] Index caching (paths only; NO tensor loading):
+#   - Saves index list to JSON under: <offline_root>/<batch_name>/.segment_index_cache_v1.json
+#   - Next runs load instantly (skips NFS directory walk + glob + ffprobe)
+#   - Auto-rebuilds cache if any referenced file is missing
+#   - If you add NEW segments to an existing batch_name, delete the cache file to rebuild
 # ============================================================
 
 from __future__ import annotations
@@ -15,6 +21,8 @@ import math
 import random
 import re
 import os
+import time  # [ADDED]
+import json  # [ADDED]
 from collections import defaultdict
 
 import torch
@@ -214,49 +222,239 @@ class SegmentDataset(Dataset):
         self.index: List[Tuple[str, int, Path, Path, int]] = []  # [UNCHANGED] Path now is mp4
         self._build_index()
 
+    # ============================================================
+    # [ADDED] Index cache helpers (paths only; no tensor loading)
+    # ============================================================
+    def _index_cache_path(self) -> Path:
+        # Per-batch cache file. Different batch_name => different cache => safe for new batches.
+        return self.batch_dir / ".segment_index_cache_v1.json"
+
+    def _index_cache_lock_path(self) -> Path:
+        return self.batch_dir / ".segment_index_cache_v1.lock"
+
+    def _try_load_index_cache(self, cache_path: Path) -> bool:
+        """
+        Load cached index if present and valid.
+        Validity check: all referenced audio_pt + video_mp4 files still exist.
+        (We do NOT attempt to detect *new* segments; delete cache to rebuild.)
+        """
+        try:
+            raw = json.loads(cache_path.read_text())
+            if not isinstance(raw, list):
+                return False
+        except Exception:
+            return False
+
+        loaded: List[Tuple[str, int, Path, Path, int]] = []
+        for row in raw:
+            if not isinstance(row, dict):
+                return False
+
+            clip_id = str(row.get("clip_id"))
+            seg_idx = int(row.get("seg_idx"))
+            T_video = int(row.get("T_video"))
+
+            # stored as relative paths under batch_dir for portability
+            a_rel = row.get("audio_rel")
+            v_rel = row.get("video_rel")
+            if not isinstance(a_rel, str) or not isinstance(v_rel, str):
+                return False
+
+            a_pt = (self.batch_dir / a_rel)
+            v_mp4 = (self.batch_dir / v_rel)
+
+            # If anything moved/was deleted, rebuild
+            if not a_pt.exists() or not v_mp4.exists():
+                return False
+
+            loaded.append((clip_id, seg_idx, a_pt, v_mp4, T_video))
+
+        # Keep same ordering behavior as original
+        loaded.sort(key=lambda x: (x[0], x[1]))
+        self.index = loaded
+        return True
+
+    def _save_index_cache(self, cache_path: Path) -> None:
+        payload: List[Dict[str, object]] = []
+        for (clip_id, seg_idx, a_pt, v_mp4, T_video) in self.index:
+            # Store relative paths (portable across machines as long as batch_dir layout matches)
+            a_rel = str(a_pt.resolve().relative_to(self.batch_dir.resolve()))
+            v_rel = str(v_mp4.resolve().relative_to(self.batch_dir.resolve()))
+            payload.append(
+                {
+                    "clip_id": clip_id,
+                    "seg_idx": int(seg_idx),
+                    "audio_rel": a_rel,
+                    "video_rel": v_rel,
+                    "T_video": int(T_video),
+                }
+            )
+
+        tmp = cache_path.with_suffix(cache_path.suffix + ".tmp")
+        tmp.write_text(json.dumps(payload))
+        tmp.replace(cache_path)  # atomic rename
+
+    def _acquire_cache_lock(self, lock_path: Path) -> bool:
+        """
+        Best-effort inter-process lock using atomic file create.
+        Returns True if lock acquired.
+        """
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            return True
+        except FileExistsError:
+            return False
+
+    def _release_cache_lock(self, lock_path: Path) -> None:
+        try:
+            lock_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    # ============================================================
+    # [ADDED] Optional CSV manifest loader (precomputed T_video)
+    #   Looks for: <batch_dir>/segment_index.csv
+    #   CSV columns:
+    #     clip_id, seg_idx, audio_rel, video_rel, T_video
+    # ============================================================
+    def _try_load_segment_index_csv(self, csv_path: Path) -> bool:
+        try:
+            import csv
+
+            with csv_path.open("r", newline="") as f:
+                r = csv.DictReader(f)
+                required = {"clip_id", "seg_idx", "audio_rel", "video_rel", "T_video"}
+                if r.fieldnames is None or not required.issubset(set(r.fieldnames)):
+                    return False
+
+                loaded: List[Tuple[str, int, Path, Path, int]] = []
+                for row in r:
+                    clip_id = str(row["clip_id"])
+                    seg_idx = int(row["seg_idx"])
+                    T_video = int(row["T_video"])
+
+                    a_pt = self.batch_dir / str(row["audio_rel"])
+                    v_mp4 = self.batch_dir / str(row["video_rel"])
+
+                    # If anything moved/was deleted, treat as invalid -> fallback
+                    if not a_pt.exists() or not v_mp4.exists():
+                        return False
+
+                    loaded.append((clip_id, seg_idx, a_pt, v_mp4, T_video))
+
+            loaded.sort(key=lambda x: (x[0], x[1]))
+            self.index = loaded
+            return True
+        except Exception:
+            return False
+
     def _build_index(self) -> None:
         if not self.audio_root.exists():
             raise FileNotFoundError(f"Missing audio root: {self.audio_root}")
         if not self.video_root.exists():
             raise FileNotFoundError(f"Missing video root: {self.video_root}")
 
-        for clip_dir in self.audio_root.iterdir():
-            if not clip_dir.is_dir():
-                continue
-            clip_id = clip_dir.name
+        # ============================================================
+        # [ADDED] Load cache if available (skips slow NFS glob + ffprobe)
+        # ============================================================
+        cache_path = self._index_cache_path()
+        lock_path = self._index_cache_lock_path()
 
-            for a_pt in clip_dir.glob("*.pt"):
-                m = _AUDIO_RE.match(a_pt.name)
-                if not m or m.group("clip") != clip_id:
+        if cache_path.exists():
+            ok = self._try_load_index_cache(cache_path)
+            if ok:
+                return
+
+        # ============================================================
+        # [ADDED] Fast path: load precomputed CSV manifest if present
+        #   - Expected at: <batch_dir>/segment_index.csv
+        #   - Avoids NFS glob() + ffprobe during training startup
+        # ============================================================
+        csv_manifest = self.batch_dir / "segment_index.csv"
+        if csv_manifest.exists():
+            ok = self._try_load_segment_index_csv(csv_manifest)
+            if ok:
+                # Best-effort: also save JSON cache for next runs (keeps your current flow)
+                try:
+                    self.batch_dir.mkdir(parents=True, exist_ok=True)
+                    self._save_index_cache(cache_path)
+                except Exception:
+                    pass
+                return
+
+        # ============================================================
+        # [ADDED] DDP-safe-ish: only one process builds cache; others wait
+        # (no change to indexing logic; only prevents 8x rebuild on DDP)
+        # ============================================================
+        have_lock = self._acquire_cache_lock(lock_path)
+        if not have_lock:
+            # wait for the other process to finish writing the cache
+            t0 = time.time()
+            timeout_s = 30 * 60
+            while time.time() - t0 < timeout_s:
+                if cache_path.exists():
+                    ok = self._try_load_index_cache(cache_path)
+                    if ok:
+                        return
+                time.sleep(1.0)
+            # If timeout, fall through to build locally (better than hanging)
+
+        try:
+            # ============================================================
+            # [KEPT] Original indexing logic (no tensor loading)
+            # ============================================================
+            for clip_dir in self.audio_root.iterdir():
+                if not clip_dir.is_dir():
                     continue
+                clip_id = clip_dir.name
 
-                seg_idx = int(m.group("idx"))
-
-                seg_dir = self.video_root / clip_id / f"seg_{seg_idx:04d}"
-                v_mp4 = seg_dir / f"seg_{seg_idx:04d}.mp4"  # [MODIFIED] load from mp4, not pt
-
-                if not v_mp4.exists():
-                    if self.strict:
-                        continue
-                    else:
+                for a_pt in clip_dir.glob("*.pt"):
+                    m = _AUDIO_RE.match(a_pt.name)
+                    if not m or m.group("clip") != clip_id:
                         continue
 
-                # ------------------------------------------------------------
-                # [MODIFIED] Probe number of frames without decoding (for bucketing)
-                # ------------------------------------------------------------
-                T_video_probe = _probe_num_frames_mp4_ffprobe(v_mp4)
-                if T_video_probe is None:
-                    if self.strict:
-                        raise RuntimeError(f"Could not probe frame count with ffprobe for: {v_mp4}")
-                    # Fallback: decode once (slower), but keeps behavior safe
-                    v_u8 = _read_mp4_to_u8_cthw(v_mp4)
-                    T_video_probe = int(v_u8.shape[1])
+                    seg_idx = int(m.group("idx"))
 
-                T_video = int(T_video_probe)
+                    seg_dir = self.video_root / clip_id / f"seg_{seg_idx:04d}"
+                    v_mp4 = seg_dir / f"seg_{seg_idx:04d}.mp4"  # [MODIFIED] load from mp4, not pt
 
-                self.index.append((clip_id, seg_idx, a_pt, v_mp4, T_video))
+                    if not v_mp4.exists():
+                        if self.strict:
+                            continue
+                        else:
+                            continue
 
-        self.index.sort(key=lambda x: (x[0], x[1]))
+                    # ------------------------------------------------------------
+                    # [MODIFIED] Probe number of frames without decoding (for bucketing)
+                    # ------------------------------------------------------------
+                    T_video_probe = _probe_num_frames_mp4_ffprobe(v_mp4)
+                    if T_video_probe is None:
+                        if self.strict:
+                            raise RuntimeError(f"Could not probe frame count with ffprobe for: {v_mp4}")
+                        # Fallback: decode once (slower), but keeps behavior safe
+                        v_u8 = _read_mp4_to_u8_cthw(v_mp4)
+                        T_video_probe = int(v_u8.shape[1])
+
+                    T_video = int(T_video_probe)
+
+                    self.index.append((clip_id, seg_idx, a_pt, v_mp4, T_video))
+
+            self.index.sort(key=lambda x: (x[0], x[1]))
+
+            # ============================================================
+            # [ADDED] Save cache for next run
+            # ============================================================
+            try:
+                self.batch_dir.mkdir(parents=True, exist_ok=True)
+                self._save_index_cache(cache_path)
+            except Exception:
+                # best-effort cache; never fail training because cache save failed
+                pass
+
+        finally:
+            if have_lock:
+                self._release_cache_lock(lock_path)
 
     def get_lengths(self) -> List[int]:
         return [int(x[4]) for x in self.index]
@@ -459,7 +657,7 @@ class SegmentDataModule(L.LightningDataModule):
             num_workers=self.num_workers,
             pin_memory=True,
             collate_fn=collate_pad,
-            persistent_workers= True
+            persistent_workers=True
         )
 
     def val_dataloader(self) -> DataLoader:
