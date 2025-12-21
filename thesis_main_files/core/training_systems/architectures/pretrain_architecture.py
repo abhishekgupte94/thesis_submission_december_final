@@ -90,8 +90,8 @@ class AVPretrainArchitecture(nn.Module):
                 d_v=cfg.vacl_d_v,
                 d_a=cfg.vacl_d_a,
                 n_heads=4,
-                attn_dropout=0.0,
-                proj_dropout=0.0,
+                attn_dropout=0.2,
+                proj_dropout=0.1,
                 share_queries=False,
             ),
         )
@@ -100,6 +100,11 @@ class AVPretrainArchitecture(nn.Module):
         # [MODIFIED] VACL wrapper
         # ============================================================
         self.vacl = VACLWrapper(
+            vacl_kwargs=dict(
+                d_v=cfg.vacl_d_v,
+                d_a=cfg.vacl_d_a,
+                seq_len=cfg.vacl_s_out,
+                k=128,),
             return_intermediates=False
         )
 
@@ -109,7 +114,7 @@ class AVPretrainArchitecture(nn.Module):
         cpe = FaceAudioCommonSpaceWrapper(
             d_a=768,  # audio feature dimension
             d_f=256,  # face / video feature dimension
-            d_common=256,  # shared embedding dimension
+            d_common=512,  # shared embedding dimension
             tau=0.07,  # temperature for InfoNCE
             loss_weight=1.0
         )
@@ -149,7 +154,7 @@ class AVPretrainArchitecture(nn.Module):
         vacl_out = self.vacl(
             X_v=X_v,
             X_a=X_a,
-            compute_infonce=compute_infonce,
+            # compute_infonce=compute_infonce,
             return_intermediates=return_intermediates,
         )
 
