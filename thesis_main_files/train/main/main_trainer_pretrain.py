@@ -25,7 +25,7 @@ from lightning.pytorch.loggers import TensorBoardLogger
 from  scripts.dataloaders.dataloader import SegmentDataModule
 from core.training_systems.architectures.pretrain_architecture import AVPretrainArchitecture
 from core.training_systems.training_systems.system_pretrain import AVPretrainSystem
-from feature_extraction.SWIN.wrapper.main_wrapper_swins import build_backbones_for_training
+from scripts.feature_extraction.SWIN.wrapper.main_wrapper_swins import build_backbones_for_training
 
 REPO_ROOT = Path(__file__).resolve().parents[2]  # adjust if your original file differs
 
@@ -132,7 +132,7 @@ def main() -> None:
         lr=args.lr,
         weight_decay=args.weight_decay,
         lambda_vacl=1.0,
-        lambda_cpe=1.0,
+        lambda_cpe=0.1,
         enable_energy_tracking=args.enable_energy_tracking,
         enable_flops_profile=args.enable_flops_profile,
     )
