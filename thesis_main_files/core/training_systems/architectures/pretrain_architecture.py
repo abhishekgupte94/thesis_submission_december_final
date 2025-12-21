@@ -51,7 +51,7 @@ from core.NPVForensics.common_projection.main.common_projection_head_module_wrap
 @dataclass
 class ArchitectureConfig:
     vacl_s_out: int = 64
-    vacl_d_v: int = 256
+    vacl_d_v: int = 768
     vacl_d_a: int = 768
 
     cpe_d_common: int = 512
