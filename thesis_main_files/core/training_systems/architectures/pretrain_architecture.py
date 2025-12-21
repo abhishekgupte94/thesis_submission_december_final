@@ -58,7 +58,7 @@ class ArchitectureConfig:
     return_intermediates: bool = False
 
     lambda_vacl: float = 1.0
-    lambda_cpe: float = 1.0
+    lambda_cpe: float = 0.1
 
 
 class AVPretrainArchitecture(nn.Module):

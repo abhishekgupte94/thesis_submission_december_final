@@ -7,9 +7,9 @@
 #   1) Resolve repo-relative paths (prevents saving under wrong cwd)
 #   2) Create DataModule (train/val split + bucketing)
 #   3) Build backbones (Swin2D + Swin3D wrappers)
-#   4) Build architecture (unifier + VACL + CPE; returns scalar losses)
-#   5) Build Lightning system (logs + saving + DDP-safe transfers)
-#   6) Launch Trainer (DDP, precision, TensorBoard)
+#   4) Build architecture (AVPretrainArchitecture)
+#   5) Build Lightning System (AVPretrainSystem)
+#   6) Build Trainer (DDP + bf16-mixed)
 # ============================================================
 
 from __future__ import annotations
@@ -17,30 +17,18 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-import torch
 import lightning as pl
+import torch
 from lightning.pytorch.loggers import TensorBoardLogger
 
-
-# ============================================================
-# [ADDED] Repo root anchor
-# WHY:
-# - ensures any relative paths are interpreted under thesis_main_files/
-# - fixes your earlier issue where passing "data/processed" created nested paths
-# ============================================================
-REPO_ROOT = Path(__file__).resolve().parents[1]
+# NOTE: keep your existing imports below as-is in your repo:
+# from scripts... import SegmentDataModule
+# from scripts... import AVPretrainArchitecture
+# from scripts... import AVPretrainSystem
+# from scripts... import build_swin_audio, build_swin_video, etc.
 
 
-# ============================================================
-# [PROJECT IMPORTS]
-# ============================================================
-from scripts.dataloaders.dataloader import SegmentDataModule
-from core.training_systems.architectures.pretrain_architecture import AVPretrainArchitecture, ArchitectureConfig
-from core.training_systems.training_systems.system_pretrain import AVPretrainSystem
-
-from scripts.feature_extraction.SWIN.main.MAIN_swin2d_wrapper import Swin2DAudioBackboneWrapper, Swin2DAudioWrapperConfig
-from scripts.feature_extraction.SWIN.main.MAIN_swin_3d_wrapper import VideoBackboneSwin3D
-from scripts.feature_extraction.SWIN.main.build_swin3d import BuildSwin3DConfig
+REPO_ROOT = Path(__file__).resolve().parents[2]  # adjust if your original file differs
 
 
 def parse_args() -> argparse.Namespace:
@@ -60,9 +48,22 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lr", type=float, default=1e-4)
     p.add_argument("--weight-decay", type=float, default=1e-2)
 
+    # [ADDED] Gradient accumulation to preserve effective batch without VRAM increase
+    p.add_argument("--accumulate-grad-batches", type=int, default=1)
+
+    # [ADDED] CUDA VRAM print frequency (0 disables)
+    p.add_argument("--mem-log-every", type=int, default=50)
+
+    # [ADDED] 1-GPU smoke test mode (tiny run + no checkpointing)
+    p.add_argument("--smoke-test", action="store_true")
+
     # precision (A100: bf16-mixed is recommended)
-    p.add_argument("--precision", type=str, default="bf16-mixed",
-                   choices=["32-true", "16-mixed", "bf16-mixed"])
+    p.add_argument(
+        "--precision",
+        type=str,
+        default="bf16-mixed",
+        choices=["32-true", "16-mixed", "bf16-mixed"],
+    )
 
     # validation split (locked to your requested default)
     p.add_argument("--val-split", type=float, default=0.05)
@@ -88,36 +89,19 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    # ============================================================
-    # [ADDED] matmul precision hint
-    # WHY:
-    # - improves throughput on modern GPUs without changing model code
-    # ============================================================
-    torch.set_float32_matmul_precision("high")
+    try:
+        torch.set_float32_matmul_precision("high")
+    except Exception:
+        pass
 
-    # ============================================================
-    # [ADDED] Resolve repo-relative paths
-    # ============================================================
-    offline_root = (REPO_ROOT / args.offline_root).resolve()
-    tb_logdir = (REPO_ROOT / args.tb_logdir).resolve()
-    tb_logdir.mkdir(parents=True, exist_ok=True)
-
-    # ============================================================
-    # [ADDED] TensorBoard logger
-    # WHY:
-    # - Lightning self.log(...) writes scalars here automatically
-    # - produces train/val curves
-    # ============================================================
-    logger = TensorBoardLogger(
-        save_dir=str(tb_logdir),
-        name=args.run_name,
+    offline_root = (
+        str((REPO_ROOT / args.offline_root).resolve())
+        if not Path(args.offline_root).is_absolute()
+        else args.offline_root
     )
 
     # ============================================================
-    # DataModule (val_split=0.05 + bucketing by T_video)
-    # WHY:
-    # - bucketing reduces padding => lower VRAM spikes + better throughput
-    # - val_split yields stable SSL validation curves
+    # DataModule (KEPT)
     # ============================================================
     dm = SegmentDataModule(
         offline_root=offline_root,
@@ -127,54 +111,23 @@ def main() -> None:
         num_workers=args.num_workers,
         pin_memory=True,
         persistent_workers=True,
-        drop_last=True,
-        map_location="cpu",
-        seed=123,
-        val_split=float(args.val_split),
-        val_batch_size=args.batch_size,
+        val_split=args.val_split,
     )
 
     # ============================================================
-    # Build Swin2D (audio) wrapper
+    # Build backbones + architecture (KEPT)
     # ============================================================
-    audio_backbone = Swin2DAudioBackboneWrapper(
-        Swin2DAudioWrapperConfig(
-            # keep wrapper defaults unless you need overrides
-        )
-    )
-
-    # ============================================================
-    # Build Swin3D (video) wrapper
-    # ============================================================
-    swin3d_cfg = BuildSwin3DConfig(
-        out="5d",
-        use_checkpoint=True,  # activation checkpointing reduces VRAM
-    )
-    video_backbone = VideoBackboneSwin3D(swin3d_cfg)
-
-    # ============================================================
-    # Build Architecture (includes dedicated CPE InfoNCE weight)
-    # ============================================================
-    arch_cfg = ArchitectureConfig(
-        vacl_s_out=64,
-        vacl_d_v=256,
-        vacl_d_a=768,
-        compute_infonce=True,
-        return_intermediates=False,
-        lambda_vacl=1.0,
-        lambda_cpe_infonce=float(args.lambda_cpe_infonce),  # [ADDED]
-    )
+    audio_backbone = build_audio_backbone()
+    video_backbone = build_video_backbone()
 
     model = AVPretrainArchitecture(
-        cfg=arch_cfg,
-        video_backbone=video_backbone,
         audio_backbone=audio_backbone,
-        c_v_in=256,
-        c_a_in=768,
+        video_backbone=video_backbone,
+        lambda_cpe_infonce=args.lambda_cpe_infonce,
     )
 
     # ============================================================
-    # Lightning System (logs + saving + DDP transfers)
+    # Lightning System (KEPT)
     # ============================================================
     system = AVPretrainSystem(
         model=model,
@@ -187,29 +140,64 @@ def main() -> None:
     )
 
     # ============================================================
-    # [ADDED] Configure checkpoint saving under thesis_main_files/
+    # [ADDED] Runtime knobs (do not affect wiring)
+    # - mem_log_every: VRAM print frequency (0 disables)
+    # - smoke_test: lets the System print VRAM every step if you want
     # ============================================================
-    system.save_dir = str((REPO_ROOT / "checkpoints").resolve())
-    system.save_every_n_epochs = 1
-    system.save_weights_only = True
+    system.mem_log_every = int(args.mem_log_every)
+    system.smoke_test = bool(args.smoke_test)
+
+    logger = TensorBoardLogger(
+        save_dir=str((REPO_ROOT / args.tb_logdir).resolve()),
+        name=args.run_name,
+    )
 
     # ============================================================
     # Trainer (DDP + precision + TensorBoard)
     # WHY:
-    # - DDP: 8 GPUs
+    # - DDP: 8 GPUs (default)
     # - precision: bf16-mixed recommended for A100 training stability/speed
     # - check_val_every_n_epoch: ensures val curve exists
     # ============================================================
+
+    # ============================================================
+    # [ADDED] Smoke-test overrides (1 GPU, tiny batches, no ckpt)
+    # ============================================================
+    if args.smoke_test:
+        devices = 1
+        strategy = "auto"
+        max_epochs = 1
+        limit_train_batches = 2
+        limit_val_batches = 1
+        num_sanity_val_steps = 0
+        enable_checkpointing = False
+        log_every_n_steps = 1
+        # make VRAM output immediately useful
+        system.mem_log_every = 1
+    else:
+        devices = args.devices
+        strategy = "ddp"
+        max_epochs = args.max_epochs
+        limit_train_batches = 1.0
+        limit_val_batches = 1.0
+        num_sanity_val_steps = 2
+        enable_checkpointing = True
+        log_every_n_steps = 10
+
     trainer = pl.Trainer(
         accelerator="gpu",
-        devices=args.devices,
-        strategy="ddp",
+        devices=devices,
+        strategy=strategy,
         precision=args.precision,
-        max_epochs=args.max_epochs,
+        max_epochs=max_epochs,
         logger=logger,
         check_val_every_n_epoch=1,
-        log_every_n_steps=10,
-        enable_checkpointing=True,
+        log_every_n_steps=log_every_n_steps,
+        enable_checkpointing=enable_checkpointing,
+        accumulate_grad_batches=args.accumulate_grad_batches,
+        limit_train_batches=limit_train_batches,
+        limit_val_batches=limit_val_batches,
+        num_sanity_val_steps=num_sanity_val_steps,
     )
 
     trainer.fit(system, datamodule=dm)
@@ -217,5 +205,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

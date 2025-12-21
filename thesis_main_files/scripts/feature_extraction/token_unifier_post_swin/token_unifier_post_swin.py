@@ -211,4 +211,4 @@ class PreVACLTokenUnifier(nn.Module):
             "d_a": int(self.cfg.d_a),
         }
 
-        return X_v, X_a, aux
+        return X_v, X_a
