@@ -56,21 +56,69 @@ def _get_project_root(anchor: Optional[Path] = None) -> Path:
 # --------------------------------------------------------------------------------------
 def _ensure_vst_on_syspath() -> None:
     """
-    Robust: find a folder under the current working directory that contains mmaction/
-    and add its parent to sys.path.
-    """
-    cwd = Path.cwd().resolve()
+    Robust VST import helper.
 
-    # Look for mmaction directory anywhere under cwd
-    for mmaction_dir in cwd.rglob("mmaction"):
-        if mmaction_dir.is_dir() and (mmaction_dir / "models").exists():
-            vst_root = mmaction_dir.parent
-            vst_root_str = str(vst_root)
-            if vst_root_str not in sys.path:
-                sys.path.insert(0, vst_root_str)
+    It tries, in order:
+      1) <repo_root>/external/Video-Swin-Transformer
+      2) Any folder under <repo_root>/external that contains mmaction/
+      3) Any folder under <repo_root> (limited depth) that contains mmaction/
+    """
+
+    import os
+    import sys
+    from pathlib import Path
+
+    def _add(p: Path) -> None:
+        p_str = str(p.resolve())
+        if p_str not in sys.path:
+            sys.path.insert(0, p_str)
+
+    # 1) Determine thesis_main_files root robustly
+    # Use this file's location instead of cwd (cwd can lie in lightning runs)
+    anchor = Path(__file__).resolve()
+
+    repo_root = None
+    for p in [anchor, *anchor.parents]:
+        if p.name == "thesis_main_files":
+            repo_root = p
+            break
+    if repo_root is None:
+        # fallback: cwd
+        repo_root = Path.cwd().resolve()
+
+    # 2) First try the expected path directly
+    direct = repo_root / "external" / "Video-Swin-Transformer"
+    if (direct / "mmaction").is_dir():
+        _add(direct)
+        return
+
+    # 3) Search under external/
+    external = repo_root / "external"
+    if external.is_dir():
+        for child in external.iterdir():
+            if child.is_dir() and (child / "mmaction").is_dir():
+                _add(child)
+                return
+
+    # 4) Last resort: limited-depth search under repo_root (avoid huge rglob on NFS)
+    # Search up to depth 5 only.
+    max_depth = 5
+    base_parts = len(repo_root.parts)
+
+    for p in repo_root.rglob("mmaction"):
+        if not p.is_dir():
+            continue
+        depth = len(p.parts) - base_parts
+        if depth > max_depth:
+            continue
+        if (p / "models").is_dir():
+            _add(p.parent)
             return
 
-    raise RuntimeError(f"Could not find a repo containing mmaction/ under: {cwd}")
+    raise RuntimeError(
+        f"Could not find a repo containing mmaction/ under repo_root={repo_root}. "
+        f"Checked: {direct} and {external} and a limited-depth scan."
+    )
 
 
 
