@@ -22,11 +22,10 @@ import torch
 from lightning.pytorch.loggers import TensorBoardLogger
 
 # NOTE: keep your existing imports below as-is in your repo:
-# from scripts... import SegmentDataModule
-# from scripts... import AVPretrainArchitecture
-# from scripts... import AVPretrainSystem
-# from scripts... import build_swin_audio, build_swin_video, etc.
-
+from  scripts.dataloaders.dataloader import SegmentDataModule
+from core.training_systems.architectures.pretrain_architecture import AVPretrainArchitecture
+from core.training_systems.training_systems.system_pretrain import AVPretrainSystem
+from feature_extraction.SWIN.wrapper.main_wrapper_swins import build_backbones_for_training
 
 REPO_ROOT = Path(__file__).resolve().parents[2]  # adjust if your original file differs
 
@@ -109,21 +108,20 @@ def main() -> None:
         batch_size=args.batch_size,
         bucket_size=args.bucket_size,
         num_workers=args.num_workers,
-        pin_memory=True,
-        persistent_workers=True,
+        # pin_memory=True,
+        # persistent_workers=True,
         val_split=args.val_split,
     )
 
     # ============================================================
     # Build backbones + architecture (KEPT)
     # ============================================================
-    audio_backbone = build_audio_backbone()
-    video_backbone = build_video_backbone()
+    video_backbone,audio_backbone = build_backbones_for_training()
 
     model = AVPretrainArchitecture(
         audio_backbone=audio_backbone,
-        video_backbone=video_backbone,
-        lambda_cpe_infonce=args.lambda_cpe_infonce,
+        video_backbone=video_backbone
+        # lambda_cpe_infonce=args.lambda_cpe_infonce,
     )
 
     # ============================================================

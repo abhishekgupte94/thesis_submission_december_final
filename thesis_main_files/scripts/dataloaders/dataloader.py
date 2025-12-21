@@ -453,6 +453,7 @@ class SegmentDataModule(L.LightningDataModule):
             num_workers=self.num_workers,
             pin_memory=True,
             collate_fn=collate_pad,
+            persistent_workers= True
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -465,5 +466,6 @@ class SegmentDataModule(L.LightningDataModule):
             num_workers=self.num_workers,
             pin_memory=True,
             collate_fn=collate_pad,
+            persistent_workers=True,
             drop_last=False,
         )
