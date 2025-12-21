@@ -203,7 +203,7 @@ class SegmentDataset(Dataset):
         offline_root: Union[str, Path],
         batch_name: str,
         *,
-        audio_dirname: str = "audio_pt",
+        audio_dirname: str = "audio",
         video_dirname: str = "video_face_crops",
         map_location: str = "cpu",
         strict: bool = True,
