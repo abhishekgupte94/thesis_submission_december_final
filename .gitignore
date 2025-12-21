@@ -285,4 +285,16 @@ thesis_main_files/data/raw/csv/lav_df/metadata/processed/*
 !thesis_main_files/data/raw/csv/lav_df/metadata/processed/.gitkeep
 !thesis_main_files/data/raw/csv/lav_df/metadata/processed/
 
+thesis_main_files/data/processed/splits/train/*
+
+
+thesis_main_files/data/processed/splits/test/video/*
+!thesis_main_files/data/processed/splits/test/video/.gitkeep
+!thesis_main_files/data/processed/splits/test/video/
+
+thesis_main_files/data/processed/splits/test/audio/*
+!thesis_main_files/data/processed/splits/test/audio/.gitkeep
+!thesis_main_files/data/processed/splits/test/audio/
+
+
 
