@@ -23,21 +23,20 @@ import json   # [ADDED] for serialising the [[s,e], ...] list
 
 # ========================== USER CONFIG ==========================
 
-AUDIO_DIR = "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/data/processed/video_files/AVSpeech/audio"
-
+AUDIO_DIR = "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/data/processed/video_files/DFDC/audio/dfdc_train_part_45"
 # [MODIFIED] OUT_DIR should be a **directory**, not a single .csv file.
-OUT_DIR = "/data/processed/AVSpeech/AVSpeech_timestamps_csv"
+OUT_DIR = "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/data/processed/DFDC/DFDC_timestamps_json_for_offline_training"
 
-LOG_FILE = "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/temp_files/AVSpeech/transcribed_files.txt"
+LOG_FILE = "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/temp_files/DFDC/transcribed_files.txt"
 
 WHISPER_MODEL_NAME = "tiny"    # "tiny" or "base" are good for CPU; "small" will be slower
-MAX_NEW_FILES = 20000            # Cap on newly processed files this run
-NUM_WORKERS = 3                # You requested 3 workers (CPU-only)
+MAX_NEW_FILES = 1500            # Cap on newly processed files this run
+NUM_WORKERS = 8                # You requested 3 workers (CPU-only)
 
 # [ADDED] Global CSV index to store file name + timestamps list [[s1,e1],[s2,e2],...]
 GLOBAL_INDEX_CSV = os.path.join(
     OUT_DIR,
-    "AVSpeech_timestamps_index.csv"
+    "DFDC_timestamp_index_45.csv"
 )
 
 # ================================================================

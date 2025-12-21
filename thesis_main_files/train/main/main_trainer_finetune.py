@@ -9,6 +9,14 @@
 #   - Swin3D (frozen)
 #   - Stage-2 finetune architecture (must output X_v_att, X_a_att, L_cor, l_infonce)
 #   - AVPretrainSystem from system_fine.py
+#
+# ============================================================
+# ===================== [GRID SEARCH] Additions =====================
+# Description:
+#   Optional grid-search mode that runs multiple sequential trials:
+#     - Each trial builds the *same* datamodule/model/system/trainer flow
+#     - DDP strategy remains intact per trial
+#     - Defaults preserve original single-run behavior
 # ============================================================
 
 from __future__ import annotations
@@ -27,7 +35,7 @@ from scripts.dataloaders.dataloader import SegmentDataModule
 # ============================================================
 # [MODIFIED] Import renamed system file
 # ============================================================
-from core.training_systems.training_systems.system_finetune import AVPretrainSystem
+from core.training_systems.training_systems.system_fine import AVPretrainSystem
 
 from scripts.feature_extraction.SWIN.main.MAIN_swin2d_wrapper import (
     Swin2DAudioBackboneWrapper,
@@ -41,6 +49,17 @@ from scripts.feature_extraction.SWIN.main.build_swin3d import BuildSwin3DConfig
 # It must return: X_v_att, X_a_att, L_cor, l_infonce
 # ============================================================
 from core.training_systems.architectures.vacl_finetune_arch import VACLFinetuneArchitecture
+
+
+# ============================================================
+# ===================== [GRID SEARCH] Helpers =====================
+# Description:
+#   Tiny parsing helpers for comma-separated CLI grids.
+#   No external deps.
+# ============================================================
+def _parse_csv_list(s: str, cast_fn):
+    items = [x.strip() for x in str(s).split(",") if x.strip() != ""]
+    return [cast_fn(x) for x in items]
 
 
 def parse_args() -> argparse.Namespace:
@@ -76,79 +95,62 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--tb-logdir", type=str, default="tb_logs")
     p.add_argument("--run-name", type=str, default="stage2_finetune")
 
+    # ============================================================
+    # ===================== [GRID SEARCH] Stage-2 Head knobs =====================
+    # Description:
+    #   Single-run overrides (also used by each grid trial).
+    #   Defaults preserve your current head behavior.
+    # ============================================================
+    p.add_argument("--stage2-pool", type=str, default="mean", choices=["mean", "max"])
+    p.add_argument("--stage2-use-layernorm", action="store_true")
+    p.add_argument("--stage2-mlp-hidden", type=int, default=-1)  # -1 => None
+    p.add_argument("--stage2-dropout", type=float, default=0.0)
+
+    # ============================================================
+    # ===================== [GRID SEARCH] Optimizer param-group knobs =====================
+    # Description:
+    #   Optional separate LR/WD for head vs other trainables.
+    # ============================================================
+    p.add_argument("--lr-head", type=float, default=None)
+    p.add_argument("--weight-decay-head", type=float, default=None)
+    p.add_argument("--lr-backbone", type=float, default=None)
+    p.add_argument("--weight-decay-backbone", type=float, default=None)
+
+    # ============================================================
+    # ===================== [GRID SEARCH] Mode toggles + speed controls =====================
+    # Description:
+    #   Stage-1 grid search usually runs:
+    #     - fewer GPUs (often 1)
+    #     - fewer epochs (often 1)
+    #     - limit_train/val_batches < 1.0
+    #   These do not change math; they only reduce compute for screening.
+    # ============================================================
+    p.add_argument("--grid-search", action="store_true")
+    p.add_argument("--grid-devices", type=int, default=1)
+    p.add_argument("--grid-max-epochs", type=int, default=1)
+    p.add_argument("--grid-limit-train-batches", type=float, default=1.0)
+    p.add_argument("--grid-limit-val-batches", type=float, default=1.0)
+
+    # ============================================================
+    # ===================== [GRID SEARCH] Search spaces (comma-separated) =====================
+    # Description:
+    #   If empty, each grid dimension becomes a singleton using the base arg value.
+    #   This preserves original single-run behavior when --grid-search is OFF.
+    # ============================================================
+    p.add_argument("--grid-lr", type=str, default="")
+    p.add_argument("--grid-weight-decay", type=str, default="")
+    p.add_argument("--grid-omega", type=str, default="")
+    p.add_argument("--grid-lambda_", type=str, default="")
+    p.add_argument("--grid-beta", type=str, default="")
+
+    p.add_argument("--grid-stage2-pool", type=str, default="")
+    p.add_argument("--grid-stage2-use-layernorm", type=str, default="")
+    p.add_argument("--grid-stage2-mlp-hidden", type=str, default="")
+    p.add_argument("--grid-stage2-dropout", type=str, default="")
+
+    p.add_argument("--grid-lr-head", type=str, default="")
+    p.add_argument("--grid-weight-decay-head", type=str, default="")
+    p.add_argument("--grid-lr-backbone", type=str, default="")
+    p.add_argument("--grid-weight-decay-backbone", type=str, default="")
+
     return p.parse_args()
-
-
-def main() -> None:
-    args = parse_args()
-
-    torch.set_float32_matmul_precision("high")
-
-    offline_root = (REPO_ROOT / args.offline_root).resolve()
-    tb_logdir = (REPO_ROOT / args.tb_logdir).resolve()
-    tb_logdir.mkdir(parents=True, exist_ok=True)
-
-    logger = TensorBoardLogger(save_dir=str(tb_logdir), name=args.run_name)
-
-    # DataModule (must yield y or y_onehot)
-    dm = SegmentDataModule(
-        offline_root=offline_root,
-        batch_name=args.batch_name,
-        batch_size=args.batch_size,
-        bucket_size=args.bucket_size,
-        num_workers=args.num_workers,
-        pin_memory=True,
-        persistent_workers=True,
-        drop_last=True,
-        map_location="cpu",
-        seed=123,
-        val_split=float(args.val_split),
-        val_batch_size=args.batch_size,
-    )
-
-    # Swin2D (audio) - frozen
-    audio_backbone = Swin2DAudioBackboneWrapper(Swin2DAudioWrapperConfig())
-    audio_backbone.requires_grad_(False)
-    audio_backbone.eval()
-
-    # Swin3D (video) - frozen
-    swin3d_cfg = BuildSwin3DConfig(out="5d", use_checkpoint=True)
-    video_backbone = VideoBackboneSwin3D(swin3d_cfg)
-    video_backbone.requires_grad_(False)
-    video_backbone.eval()
-
-    # Stage-2 finetune architecture
-    model = VACLFinetuneArchitecture(
-        video_backbone=video_backbone,
-        audio_backbone=audio_backbone,
-    )
-
-    system = AVPretrainSystem(
-        model=model,
-        lr=args.lr,
-        weight_decay=args.weight_decay,
-        omega=args.omega,
-        lambda_=args.lambda_,
-        alpha=args.alpha,
-        beta=args.beta,
-        val_auc_thresholds=args.val_auc_thresholds,
-        val_metric_cap_batches=args.val_metric_cap_batches,
-    )
-
-    trainer = pl.Trainer(
-        accelerator="gpu",
-        devices=args.devices,
-        strategy="ddp",
-        precision=args.precision,
-        max_epochs=args.max_epochs,
-        logger=logger,
-        check_val_every_n_epoch=1,
-        log_every_n_steps=10,
-        enable_checkpointing=True,
-    )
-
-    trainer.fit(system, datamodule=dm)
-
-
-if __name__ == "__main__":
-    main()

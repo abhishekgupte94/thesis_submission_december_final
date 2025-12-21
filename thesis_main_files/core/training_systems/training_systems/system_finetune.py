@@ -72,6 +72,31 @@ class AVPretrainSystem(pl.LightningModule):
         # ============================================================
         val_auc_thresholds: int = 256,
         val_metric_cap_batches: int = 200,
+
+        # ============================================================
+        # ===================== [GRID SEARCH] Stage-2 Head HParams =====================
+        # Description:
+        #   These args allow the *trainer script* to grid-search head configurations
+        #   without changing the model math/wiring elsewhere.
+        #   Defaults exactly preserve current behavior.
+        # ==============================================================================
+        stage2_pool: str = "mean",
+        stage2_use_layernorm: bool = False,
+        stage2_mlp_hidden: int = -1,     # -1 => None
+        stage2_dropout: float = 0.0,
+
+        # ============================================================
+        # ===================== [GRID SEARCH] Optimizer Param Groups =====================
+        # Description:
+        #   Adds "trailing groups" parameter-group support for grid search:
+        #     - head LR/WD can differ from the rest of trainable params
+        #   Defaults preserve current behavior (single lr/wd everywhere).
+        #   Frozen Swins remain excluded because requires_grad=False.
+        # ==============================================================================
+        lr_head: float | None = None,
+        weight_decay_head: float | None = None,
+        lr_backbone: float | None = None,
+        weight_decay_backbone: float | None = None,
     ) -> None:
         super().__init__()
 
@@ -99,6 +124,26 @@ class AVPretrainSystem(pl.LightningModule):
         # ------------------------------------------------------------
         self.val_auc_thresholds = int(val_auc_thresholds)
         self.val_metric_cap_batches = int(val_metric_cap_batches)
+
+        # ============================================================
+        # ===================== [GRID SEARCH] Save Head HParams =====================
+        # Description:
+        #   Stored so head construction is deterministic per run/trial.
+        # ==============================================================================
+        self._stage2_pool = str(stage2_pool)
+        self._stage2_use_layernorm = bool(stage2_use_layernorm)
+        self._stage2_mlp_hidden = int(stage2_mlp_hidden)
+        self._stage2_dropout = float(stage2_dropout)
+
+        # ============================================================
+        # ===================== [GRID SEARCH] Save Optimizer Group HParams =====================
+        # Description:
+        #   Stored and used in configure_optimizers() param-groups.
+        # ==============================================================================
+        self.lr_head = None if lr_head is None else float(lr_head)
+        self.weight_decay_head = None if weight_decay_head is None else float(weight_decay_head)
+        self.lr_backbone = None if lr_backbone is None else float(lr_backbone)
+        self.weight_decay_backbone = None if weight_decay_backbone is None else float(weight_decay_backbone)
 
         # ============================================================
         # [ADDED] Freeze Swin backbones (params)
@@ -134,9 +179,23 @@ class AVPretrainSystem(pl.LightningModule):
             if k is None:
                 raise RuntimeError("[AVPretrainSystem] Could not infer k for Stage2AVClassifierHead from model.")
 
+            # ============================================================
+            # ===================== [GRID SEARCH] Head Construction =====================
+            # Description:
+            #   Uses the head hyperparameters passed into AVPretrainSystem
+            #   (grid-search controlled) while preserving defaults.
+            # ==============================================================================
+            mlp_hidden = None if int(self._stage2_mlp_hidden) < 0 else int(self._stage2_mlp_hidden)
+
             self.model.stage2_head = Stage2AVClassifierHead(
                 k=k,
-                cfg=Stage2HeadConfig(num_classes=2),
+                cfg=Stage2HeadConfig(
+                    num_classes=2,
+                    pool=str(self._stage2_pool),
+                    use_layernorm=bool(self._stage2_use_layernorm),
+                    mlp_hidden=mlp_hidden,
+                    dropout=float(self._stage2_dropout),
+                ),
             )
 
         # ============================================================
@@ -357,19 +416,328 @@ class AVPretrainSystem(pl.LightningModule):
         return loss_total
 
     # ============================================================
-    # [KEPT] Optimizer config
-    # NOTE: frozen Swins are excluded because requires_grad=False.
+    # ===================== [GRID SEARCH] Optimizer Param Groups =====================
+    # Description:
+    #   Adds trailing param-groups:
+    #     - Group 0: "other trainable params" (non-head)
+    #     - Group 1: "stage2_head params"
+    #   Defaults preserve your original single-group AdamW behavior.
     # ============================================================
     def configure_optimizers(self):
-        return torch.optim.AdamW(
-            [p for p in self.model.parameters() if p.requires_grad],
-            lr=self.lr,
-            weight_decay=self.weight_decay,
-        )
+        head_params = []
+        other_params = []
+
+        head = getattr(self.model, "stage2_head", None)
+        head_param_ids = set()
+
+        if head is not None:
+            for p in head.parameters():
+                if p.requires_grad:
+                    head_params.append(p)
+                    head_param_ids.add(id(p))
+
+        for p in self.model.parameters():
+            if not p.requires_grad:
+                continue
+            if id(p) in head_param_ids:
+                continue
+            other_params.append(p)
+
+        param_groups = []
+
+        if len(other_params) > 0:
+            param_groups.append(
+                {
+                    "params": other_params,
+                    "lr": self.lr if self.lr_backbone is None else self.lr_backbone,
+                    "weight_decay": self.weight_decay if self.weight_decay_backbone is None else self.weight_decay_backbone,
+                }
+            )
+
+        if len(head_params) > 0:
+            param_groups.append(
+                {
+                    "params": head_params,
+                    "lr": self.lr if self.lr_head is None else self.lr_head,
+                    "weight_decay": self.weight_decay if self.weight_decay_head is None else self.weight_decay_head,
+                }
+            )
+
+        if len(param_groups) == 0:
+            raise RuntimeError("[AVPretrainSystem] No trainable parameters found for optimizer.")
+
+        return torch.optim.AdamW(param_groups)
 
 
 
+def _run_one(args: argparse.Namespace, exp_name_suffix: str = "") -> float:
+    torch.set_float32_matmul_precision("high")
 
+    offline_root = (REPO_ROOT / args.offline_root).resolve()
+    tb_logdir = (REPO_ROOT / args.tb_logdir).resolve()
+    tb_logdir.mkdir(parents=True, exist_ok=True)
+
+    run_name = args.run_name if exp_name_suffix == "" else f"{args.run_name}_{exp_name_suffix}"
+    logger = TensorBoardLogger(save_dir=str(tb_logdir), name=run_name)
+
+    dm = SegmentDataModule(
+        offline_root=offline_root,
+        batch_name=args.batch_name,
+        batch_size=args.batch_size,
+        bucket_size=args.bucket_size,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        persistent_workers=True,
+        drop_last=True,
+        map_location="cpu",
+        seed=123,
+        val_split=float(args.val_split),
+        val_batch_size=args.batch_size,
+    )
+
+    # Swin2D (audio) - frozen
+    audio_backbone = Swin2DAudioBackboneWrapper(Swin2DAudioWrapperConfig())
+    audio_backbone.requires_grad_(False)
+    audio_backbone.eval()
+
+    # Swin3D (video) - frozen
+    swin3d_cfg = BuildSwin3DConfig(out="5d", use_checkpoint=True)
+    video_backbone = VideoBackboneSwin3D(swin3d_cfg)
+    video_backbone.requires_grad_(False)
+    video_backbone.eval()
+
+    # Stage-2 finetune architecture
+    model = VACLFinetuneArchitecture(
+        video_backbone=video_backbone,
+        audio_backbone=audio_backbone,
+    )
+
+    system = AVPretrainSystem(
+        model=model,
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        omega=args.omega,
+        lambda_=args.lambda_,
+        alpha=args.alpha,
+        beta=args.beta,
+        val_auc_thresholds=args.val_auc_thresholds,
+        val_metric_cap_batches=args.val_metric_cap_batches,
+
+        # ===================== [GRID SEARCH] Head hparams =====================
+        stage2_pool=args.stage2_pool,
+        stage2_use_layernorm=bool(args.stage2_use_layernorm),
+        stage2_mlp_hidden=int(args.stage2_mlp_hidden),
+        stage2_dropout=float(args.stage2_dropout),
+
+        # ===================== [GRID SEARCH] Optimizer param-group knobs =====================
+        lr_head=args.lr_head,
+        weight_decay_head=args.weight_decay_head,
+        lr_backbone=args.lr_backbone,
+        weight_decay_backbone=args.weight_decay_backbone,
+    )
+
+    trainer = pl.Trainer(
+        accelerator="gpu",
+        devices=args.devices,
+        strategy="ddp",
+        precision=args.precision,
+        max_epochs=args.max_epochs,
+        logger=logger,
+        check_val_every_n_epoch=1,
+        log_every_n_steps=10,
+        enable_checkpointing=True,
+
+        # ===================== [GRID SEARCH] Speed controls =====================
+        limit_train_batches=getattr(args, "limit_train_batches", 1.0),
+        limit_val_batches=getattr(args, "limit_val_batches", 1.0),
+    )
+
+    trainer.fit(system, datamodule=dm)
+
+    # Prefer val/loss_total if present
+    metric = trainer.callback_metrics.get("val/loss_total")
+    if metric is None:
+        metric = trainer.callback_metrics.get("train/loss_total")
+
+    if metric is None:
+        raise RuntimeError("[GRID SEARCH] No suitable metric found in trainer.callback_metrics.")
+
+    return float(metric.detach().cpu()) if torch.is_tensor(metric) else float(metric)
+
+
+# ============================================================
+# ===================== [GRID SEARCH] Single Trial Runner =====================
+# Description:
+#   Builds datamodule/model/system/trainer exactly like your original script.
+#   Returns a scalar score (prefers val/loss_total) for selection.
+# ============================================================
+def main() -> None:
+    args = parse_args()
+
+    # ============================================================
+    # ===================== [GRID SEARCH] Mode =====================
+    # Description:
+    #   Sequentially runs multiple trials (each trial is its own Lightning fit).
+    #   Does NOT modify your underlying logic; only varies init-time hparams.
+    # ============================================================
+    if args.grid_search:
+        import itertools
+        import copy
+
+        base = copy.deepcopy(args)
+
+        # Stage-1 screening defaults (override only in grid mode)
+        base.devices = int(args.grid_devices)
+        base.max_epochs = int(args.grid_max_epochs)
+        base.limit_train_batches = float(args.grid_limit_train_batches)
+        base.limit_val_batches = float(args.grid_limit_val_batches)
+
+        # Build grids (empty => singleton from base args)
+        lr_grid = _parse_csv_list(args.grid_lr, float) if args.grid_lr else [float(base.lr)]
+        wd_grid = _parse_csv_list(args.grid_weight_decay, float) if args.grid_weight_decay else [float(base.weight_decay)]
+        omega_grid = _parse_csv_list(args.grid_omega, float) if args.grid_omega else [float(base.omega)]
+        lambda_grid = _parse_csv_list(args.grid_lambda_, float) if args.grid_lambda_ else [float(base.lambda_)]
+        beta_grid = _parse_csv_list(args.grid_beta, float) if args.grid_beta else [float(base.beta)]
+
+        pool_grid = _parse_csv_list(args.grid_stage2_pool, str) if args.grid_stage2_pool else [str(base.stage2_pool)]
+        ln_grid = _parse_csv_list(args.grid_stage2_use_layernorm, int) if args.grid_stage2_use_layernorm else [1 if base.stage2_use_layernorm else 0]
+        mlp_grid = _parse_csv_list(args.grid_stage2_mlp_hidden, int) if args.grid_stage2_mlp_hidden else [int(base.stage2_mlp_hidden)]
+        drop_grid = _parse_csv_list(args.grid_stage2_dropout, float) if args.grid_stage2_dropout else [float(base.stage2_dropout)]
+
+        lrh_grid = _parse_csv_list(args.grid_lr_head, float) if args.grid_lr_head else [base.lr_head]
+        wdh_grid = _parse_csv_list(args.grid_weight_decay_head, float) if args.grid_weight_decay_head else [base.weight_decay_head]
+        lrb_grid = _parse_csv_list(args.grid_lr_backbone, float) if args.grid_lr_backbone else [base.lr_backbone]
+        wdb_grid = _parse_csv_list(args.grid_weight_decay_backbone, float) if args.grid_weight_decay_backbone else [base.weight_decay_backbone]
+
+        best = {"score": float("inf"), "desc": None}
+
+        for (lr, wd, omega, lam, beta,
+             pool, ln, mlp, drop,
+             lrh, wdh, lrb, wdb) in itertools.product(
+            lr_grid, wd_grid, omega_grid, lambda_grid, beta_grid,
+            pool_grid, ln_grid, mlp_grid, drop_grid,
+            lrh_grid, wdh_grid, lrb_grid, wdb_grid
+        ):
+            trial = copy.deepcopy(base)
+
+            trial.lr = float(lr)
+            trial.weight_decay = float(wd)
+            trial.omega = float(omega)
+            trial.lambda_ = float(lam)
+            trial.beta = float(beta)
+
+            trial.stage2_pool = str(pool)
+            trial.stage2_use_layernorm = bool(int(ln))
+            trial.stage2_mlp_hidden = int(mlp)
+            trial.stage2_dropout = float(drop)
+
+            trial.lr_head = lrh if lrh is None else float(lrh)
+            trial.weight_decay_head = wdh if wdh is None else float(wdh)
+            trial.lr_backbone = lrb if lrb is None else float(lrb)
+            trial.weight_decay_backbone = wdb if wdb is None else float(wdb)
+
+            suffix = (
+                f"lr{trial.lr}_wd{trial.weight_decay}"
+                f"_om{trial.omega}_lam{trial.lambda_}_b{trial.beta}"
+                f"_pool{trial.stage2_pool}_ln{int(trial.stage2_use_layernorm)}"
+                f"_mlp{trial.stage2_mlp_hidden}_dr{trial.stage2_dropout}"
+                f"_lrh{trial.lr_head}_wdh{trial.weight_decay_head}"
+                f"_lrb{trial.lr_backbone}_wdb{trial.weight_decay_backbone}"
+            )
+
+            score = _run_one(trial, exp_name_suffix=suffix)
+
+            if score < best["score"]:
+                best = {"score": score, "desc": suffix}
+
+            torch.cuda.empty_cache()
+
+        print(f"[GRID SEARCH DONE] best_score={best['score']:.6f} best_cfg={best['desc']}")
+        return
+
+    # ============================================================
+    # [KEPT] Original single-run behavior
+    # ============================================================
+    torch.set_float32_matmul_precision("high")
+
+    offline_root = (REPO_ROOT / args.offline_root).resolve()
+    tb_logdir = (REPO_ROOT / args.tb_logdir).resolve()
+    tb_logdir.mkdir(parents=True, exist_ok=True)
+
+    logger = TensorBoardLogger(save_dir=str(tb_logdir), name=args.run_name)
+
+    dm = SegmentDataModule(
+        offline_root=offline_root,
+        batch_name=args.batch_name,
+        batch_size=args.batch_size,
+        bucket_size=args.bucket_size,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        persistent_workers=True,
+        drop_last=True,
+        map_location="cpu",
+        seed=123,
+        val_split=float(args.val_split),
+        val_batch_size=args.batch_size,
+    )
+
+    audio_backbone = Swin2DAudioBackboneWrapper(Swin2DAudioWrapperConfig())
+    audio_backbone.requires_grad_(False)
+    audio_backbone.eval()
+
+    swin3d_cfg = BuildSwin3DConfig(out="5d", use_checkpoint=True)
+    video_backbone = VideoBackboneSwin3D(swin3d_cfg)
+    video_backbone.requires_grad_(False)
+    video_backbone.eval()
+
+    model = VACLFinetuneArchitecture(
+        video_backbone=video_backbone,
+        audio_backbone=audio_backbone,
+    )
+
+    system = AVPretrainSystem(
+        model=model,
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        omega=args.omega,
+        lambda_=args.lambda_,
+        alpha=args.alpha,
+        beta=args.beta,
+        val_auc_thresholds=args.val_auc_thresholds,
+        val_metric_cap_batches=args.val_metric_cap_batches,
+
+        # ===================== [GRID SEARCH] Head hparams (single-run too) =====================
+        stage2_pool=args.stage2_pool,
+        stage2_use_layernorm=bool(args.stage2_use_layernorm),
+        stage2_mlp_hidden=int(args.stage2_mlp_hidden),
+        stage2_dropout=float(args.stage2_dropout),
+
+        # ===================== [GRID SEARCH] Optimizer param-group knobs =====================
+        lr_head=args.lr_head,
+        weight_decay_head=args.weight_decay_head,
+        lr_backbone=args.lr_backbone,
+        weight_decay_backbone=args.weight_decay_backbone,
+    )
+
+    trainer = pl.Trainer(
+        accelerator="gpu",
+        devices=args.devices,
+        strategy="ddp",
+        precision=args.precision,
+        max_epochs=args.max_epochs,
+        logger=logger,
+        check_val_every_n_epoch=1,
+        log_every_n_steps=10,
+        enable_checkpointing=True,
+    )
+
+    trainer.fit(system, datamodule=dm)
+
+
+# if __name__ == "__main__":
+#     main()
+#
+#
 
 
 
