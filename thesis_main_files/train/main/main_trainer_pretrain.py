@@ -23,7 +23,7 @@ from lightning.pytorch.loggers import TensorBoardLogger
 
 # NOTE: keep your existing imports below as-is in your repo:
 from  scripts.dataloaders.dataloader import SegmentDataModule
-from core.training_systems.architectures.pretrain_architecture import AVPretrainArchitecture
+from core.training_systems.architectures.pretrain_architecture import AVPretrainArchitecture, ArchitectureConfig
 from core.training_systems.training_systems.system_pretrain import AVPretrainSystem
 from scripts.feature_extraction.SWIN.wrapper.main_wrapper_swins import build_backbones_for_training
 
@@ -117,10 +117,11 @@ def main() -> None:
     # Build backbones + architecture (KEPT)
     # ============================================================
     video_backbone,audio_backbone = build_backbones_for_training()
-
+    cfg = ArchitectureConfig()
     model = AVPretrainArchitecture(
+        cfg = cfg,
         audio_backbone=audio_backbone,
-        video_backbone=video_backbone
+        video_backbone=video_backbone,
         # lambda_cpe_infonce=args.lambda_cpe_infonce,
     )
 
