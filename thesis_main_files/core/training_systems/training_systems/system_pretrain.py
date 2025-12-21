@@ -132,7 +132,7 @@ class AVPretrainSystem(pl.LightningModule):
         if torch.cuda.is_available() and getattr(self, "global_rank", 0) == 0 and batch_idx == 0:
             torch.cuda.reset_peak_memory_stats()
 
-        audio = batch["audio"]
+        audio = batch["audio"].unsqueeze(1)
         video = batch["video"]               # (B,3,T,H,W)
 
         out = self.model(video_in=video, audio_in=audio)
@@ -166,7 +166,7 @@ class AVPretrainSystem(pl.LightningModule):
     # [ADDED] Validation step (SSL)
     # ============================================================
     def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
-        audio = batch["audio"]
+        audio = batch["audio"].unsqueeze(1)
         video = batch["video"]
 
         out = self.model(video_in=video, audio_in=audio)
