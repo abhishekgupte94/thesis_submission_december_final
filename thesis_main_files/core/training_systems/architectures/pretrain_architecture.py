@@ -69,7 +69,7 @@ class AVPretrainArchitecture(nn.Module):
         video_backbone: nn.Module,
         audio_backbone: nn.Module,
         c_v_in: int = 768,
-        c_a_in: int = 768,s
+        c_a_in: int = 768,
     ):
         super().__init__()
         self.cfg = cfg
