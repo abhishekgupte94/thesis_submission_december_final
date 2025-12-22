@@ -20,6 +20,7 @@ from pathlib import Path
 import lightning as pl
 import torch
 from lightning.pytorch.loggers import TensorBoardLogger
+from lightning.pytorch.callbacks import ModelCheckpoint
 
 # NOTE: keep your existing imports below as-is in your repo:
 from  scripts.dataloaders.dataloader import SegmentDataModule
@@ -183,6 +184,13 @@ def main() -> None:
         enable_checkpointing = True
         log_every_n_steps = 10
 
+    ckpt_cb = ModelCheckpoint(
+        save_last=True,  # always create last.ckpt
+        save_top_k=-1,  # keep all epochs (safe for now)
+        every_n_epochs=1,  # save each epoch end
+        filename="epoch={epoch}-step={step}",
+    )
+
     trainer = pl.Trainer(
         accelerator="gpu",
         devices=devices,
@@ -191,6 +199,7 @@ def main() -> None:
         max_epochs=max_epochs,
         logger=logger,
         check_val_every_n_epoch=1,
+        callbacks=[ckpt_cb],
         log_every_n_steps=log_every_n_steps,
         enable_checkpointing=enable_checkpointing,
         accumulate_grad_batches=args.accumulate_grad_batches,
