@@ -32,6 +32,19 @@ class MultiModalProjectionHeads(nn.Module):
         # Face projector (deeper head)
         self.g_f_to_fa = CommonSpaceProjector(in_dim=self.d_f, out_dim=self.d_common, num_layers=2)
 
+    @staticmethod
+    def _ensure_bd(x: torch.Tensor, *, name: str) -> torch.Tensor:
+        """
+        Accept:
+          - (B, D)    -> unchanged
+          - (B, S, D) -> mean over S -> (B, D)
+        """
+        if x.ndim == 2:
+            return x
+        if x.ndim == 3:
+            # IMPORTANT: pool over sequence dim, not embedding dim
+            return x.mean(dim=1)
+        raise ValueError(f"[CPE] {name} expected (B,D) or (B,S,D), got {tuple(x.shape)}")
     def forward(self, X_a: torch.Tensor, X_f: torch.Tensor) -> dict:
         """
         X_a: (N, d_a)
@@ -41,6 +54,9 @@ class MultiModalProjectionHeads(nn.Module):
           Z_a: (N, d_common)
           Z_f: (N, d_common)
         """
+        X_a = self._ensure_bd(X_a, name="X_a")  # (B, Da)
+        X_f = self._ensure_bd(X_f, name="X_f")  # (B, Df)
+
         if X_a.dim() != 2 or X_f.dim() != 2:
             raise ValueError(f"ProjectionHeads expect pooled (N,D). Got {X_a.shape}, {X_f.shape}")
 
