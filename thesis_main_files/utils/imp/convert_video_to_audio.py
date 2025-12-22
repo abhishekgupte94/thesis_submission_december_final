@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 # -----------------------------
 # Helpers
 # -----------------------------
-LOG_DIR = "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/temp_files/logs_for_audio_conversion"
+LOG_DIR = "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/temp_files/logs_for_audio_conversion_test"
 VIDEO_DIR = "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/data/processed/splits/test/video"
 AUDIO_DIR = "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/data/processed/splits/test/audio"
 
@@ -267,7 +267,7 @@ if __name__ == "__main__":
         audio_dir=AUDIO_DIR,
         log_dir=LOG_DIR,
         num_workers=6,
-        max_videos=501,     # cap NEW videos processed this run
+        max_videos=10000,     # cap NEW videos processed this run
         recursive=False,
     )
 
