@@ -12,8 +12,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 # Helpers
 # -----------------------------
 LOG_DIR = "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/temp_files/logs_for_audio_conversion"
-VIDEO_DIR = "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/data/processed/video_files/DFDC/video/dfdc_train_part_45"
-AUDIO_DIR = "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/data/processed/video_files/DFDC/audio/dfdc_train_part_45"
+VIDEO_DIR = "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/data/processed/splits/test/video"
+AUDIO_DIR = "/Users/abhishekgupte_macbookpro/PycharmProjects/project_combined_repo_clean/thesis_main_files/data/processed/splits/test/audio"
 
 
 def ensure_dir(path: str) -> None:
