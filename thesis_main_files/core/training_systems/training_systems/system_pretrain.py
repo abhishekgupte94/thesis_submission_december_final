@@ -18,6 +18,9 @@ from typing import Any, Dict, Optional
 import lightning as pl
 import torch
 import torch.nn as nn
+# [ADDED] FLOPs + Energy profiling
+from fvcore.nn import FlopCountAnalysis, flop_count_table
+from codecarbon import EmissionsTracker
 
 
 class AVPretrainSystem(pl.LightningModule):
@@ -45,6 +48,9 @@ class AVPretrainSystem(pl.LightningModule):
         self.weight_decay = weight_decay
         self.lambda_vacl = lambda_vacl
         self.lambda_cpe = lambda_cpe
+        # [ADDED] Profiling runtime state (rank0 only)
+        self._flops_profiled: bool = False
+        self._energy_tracker: Optional[EmissionsTracker] = None
 
         self.enable_energy_tracking = enable_energy_tracking
         self.enable_flops_profile = enable_flops_profile
@@ -68,18 +74,98 @@ class AVPretrainSystem(pl.LightningModule):
         return batch
 
     def on_fit_start(self) -> None:
-        # [ADDED] energy tracking / flops profiling (kept as per your file)
-        if self.enable_flops_profile:
+        # ============================================================
+        # [ADDED] CodeCarbon energy tracking (rank0 only)
+        # ============================================================
+        if self.enable_energy_tracking and self.trainer.is_global_zero:
+            self._energy_tracker = EmissionsTracker(
+                project_name="AVPretrainStage1",
+                measure_power_secs=10,
+                log_level="error",
+            )
+            self._energy_tracker.start()
+
+        # ============================================================
+        # [ADDED] FLOPs profiling (rank0 only, once)
+        # ============================================================
+        if self.enable_flops_profile and self.trainer.is_global_zero:
             self._profile_flops_once()
 
+
     def on_fit_end(self) -> None:
-        # [KEPT] placeholder for trackers (as per your file)
-        return
+        # ============================================================
+        # [ADDED] Stop CodeCarbon tracker cleanly
+        # ============================================================
+        if self._energy_tracker is not None:
+            emissions = self._energy_tracker.stop()
+            print(f"[ENERGY] CodeCarbon emissions (kg CO2eq): {emissions}", flush=True)
+            self._energy_tracker = None
 
     def _profile_flops_once(self) -> None:
-        # [KEPT] your original method body (not modified here)
-        # NOTE: left untouched to avoid any wiring disruption.
-        return
+        """
+        One-time FLOPs profiling using fvcore.
+        - Runs a single forward pass
+        - Rank0 only
+        - No gradients
+        - No training disruption
+        """
+        if self._flops_profiled:
+            return
+
+        if not self.trainer.is_global_zero:
+            return
+
+        try:
+            self.eval()
+            with torch.no_grad():
+                # grab ONE batch safely
+                batch = next(iter(self.trainer.datamodule.train_dataloader()))
+                batch = self.transfer_batch_to_device(batch, self.device, 0)
+
+                audio = batch["audio"].unsqueeze(1)
+                video = batch["video"]
+
+                flops = FlopCountAnalysis(
+                    self.model,
+                    dict(video_in=video, audio_in=audio),
+                )
+
+            total_flops = flops.total()
+            # ============================================================
+            # [ADDED] Log FLOPs once to TensorBoard as metadata
+            # ============================================================
+            try:
+                flops_giga = float(total_flops) / 1e9
+
+                self.log(
+                    "meta/flops_per_forward",
+                    float(total_flops),
+                    on_step=False,
+                    on_epoch=True,
+                    prog_bar=False,
+                    sync_dist=False,
+                )
+
+                self.log(
+                    "meta/flops_giga",
+                    flops_giga,
+                    on_step=False,
+                    on_epoch=True,
+                    prog_bar=False,
+                    sync_dist=False,
+                )
+            except Exception:
+                pass
+
+            print("\n================ FLOPs PROFILE ================")
+            print(f"Total FLOPs (per forward): {total_flops:,.0f}")
+            print(flop_count_table(flops))
+            print("================================================\n")
+
+            self._flops_profiled = True
+
+        except Exception as e:
+            print(f"[FLOPs] Profiling failed: {e}", flush=True)
 
     # ============================================================
     # [ADDED] CUDA VRAM logging helpers (rank0 only)
