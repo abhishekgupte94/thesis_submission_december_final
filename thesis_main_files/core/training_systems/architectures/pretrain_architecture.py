@@ -68,7 +68,7 @@ class AVPretrainArchitecture(nn.Module):
         cfg: ArchitectureConfig,
         video_backbone: nn.Module,
         audio_backbone: nn.Module,
-        c_v_in: int = 768,
+        c_v_in: int = 256,
         c_a_in: int = 768,
     ):
         super().__init__()
@@ -84,16 +84,13 @@ class AVPretrainArchitecture(nn.Module):
         # [KEPT] Pre-VACL token unifier
         # ============================================================
         self.pre_vacl_unifier = PreVACLTokenUnifier(
-            c_v_in=c_v_in,
-            c_a_in=c_a_in,
+            c_v_in=c_v_in,  # e.g., 256
+            c_a_in=c_a_in,  # e.g., 768
             cfg=TokenUnifierForVACLConfig(
-                s_out=cfg.vacl_s_out,
-                d_v=cfg.vacl_d_v,
-                d_a=cfg.vacl_d_a,
-                n_heads=4,
-                attn_dropout=0.2,
-                proj_dropout=0.1,
-                share_queries=False,
+                interp_mode="linear",
+                align_corners=False,
+                grid_hw=(7, 7),
+                audio_tokens=49,
             ),
         )
 
@@ -145,9 +142,11 @@ class AVPretrainArchitecture(nn.Module):
         # [KEPT] Token unification
         # ============================================================
         X_v, X_a = self.pre_vacl_unifier(
-            video_feat_3d=video_feat_3d,
-            audio_tokens=audio_tokens,
+            video_feat_3d=video_feat_3d,  # (B,256,T',7,7)
+            audio_tokens=audio_tokens,  # (B,49,768)
         )
+        # X_v: (B,T',256)
+        # X_a: (B,T',768)
 
         # ============================================================
         # [KEPT] VACL
