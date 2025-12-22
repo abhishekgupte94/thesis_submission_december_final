@@ -143,9 +143,6 @@ class OfflineAudioExporter(pl.LightningModule):
         video_payload = torch.load(video_pt_path, map_location="cpu")
 
         clip_id = video_payload.get("clip_id", None)
-        clip_id = str(clip_id)
-        if clip_id.endswith(".mp4"):
-            clip_id = clip_id[:-4]
         if clip_id is None:
             clip_id = video_pt_path.stem.replace("_video", "")
 
