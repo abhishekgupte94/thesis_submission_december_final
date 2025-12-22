@@ -14,6 +14,8 @@
 # ============================================================
 
 from __future__ import annotations
+from torch.utils.data import BatchSampler, Sampler
+from typing import Iterator, List, Sequence, Optional
 
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
@@ -110,7 +112,6 @@ def _read_mp4_to_u8_cthw(mp4_path: Path) -> torch.Tensor:
 
 
 _AUDIO_RE = re.compile(r"^(?P<clip>.+)_(?P<idx>\d{4})\.pt$")
-
 
 # ============================================================
 # [EXISTING] DDP-friendly bucketed sampler
@@ -625,40 +626,45 @@ class SegmentDataModule(L.LightningDataModule):
     def train_dataloader(self) -> DataLoader:
         assert self.dataset is not None and self.train_set is not None
 
-        # get lengths for TRAIN subset indices
-        all_lengths = self.dataset.get_lengths()
-        train_lengths = [all_lengths[i] for i in self.train_set.indices]  # type: ignore
-
-        sampler = BucketBatchSampler(
-            train_lengths,
-            batch_size=self.batch_size,
-            bucket_size=self.bucket_size,
-            drop_last=self.drop_last,
-            shuffle=True,
-            seed=self.seed,
-        )
-
-        # wrap sampler indices back to original dataset indices
-        # each batch is indices into train_set; we map to original
-        def _map_batch(batch: List[int]) -> List[int]:
-            return [self.train_set.indices[j] for j in batch]  # type: ignore
-
-        class _MappedBatchSampler(Sampler[List[int]]):
-            def __iter__(self_inner):
-                for batch in sampler:
-                    yield _map_batch(batch)
-
-            def __len__(self_inner):
-                return len(sampler)
-
+        # ============================================================
+        # [PATCH] Disable bucketing; use plain batching + shuffle
+        #   - Keep index caching untouched (dataset index build remains the same)
+        #   - Keep collate_pad(...) for T_max padding
+        #   - Keep pin_memory + persistent_workers
+        # ============================================================
         return DataLoader(
-            self.dataset,
-            batch_sampler=_MappedBatchSampler(),
+            self.train_set,
+            batch_size=self.batch_size,
+            shuffle=True,
             num_workers=self.num_workers,
             pin_memory=True,
             collate_fn=collate_pad,
-            persistent_workers=True
+            persistent_workers=True,
+            drop_last=self.drop_last,
         )
+
+
+        # # wrap sampler indices back to original dataset indices
+        # # each batch is indices into train_set; we map to original
+        # def _map_batch(batch: List[int]) -> List[int]:
+        #     return [self.train_set.indices[j] for j in batch]  # type: ignore
+        #
+        # class _MappedBatchSampler(Sampler[List[int]]):
+        #     def __iter__(self_inner):
+        #         for batch in sampler:
+        #             yield _map_batch(batch)
+        #
+        #     def __len__(self_inner):
+        #         return len(sampler)
+        #
+        # return DataLoader(
+        #     self.dataset,
+        #     batch_sampler=_MappedBatchSampler(),
+        #     num_workers=self.num_workers,
+        #     pin_memory=True,
+        #     collate_fn=collate_pad,
+        #     persistent_workers=True
+        # )
 
     def val_dataloader(self) -> DataLoader:
         assert self.dataset is not None and self.val_set is not None
