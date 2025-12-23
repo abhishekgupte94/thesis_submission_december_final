@@ -23,7 +23,7 @@ from fvcore.nn import FlopCountAnalysis, flop_count_table
 from codecarbon import EmissionsTracker
 
 
-class AVPretrainSystem(pl.LightningModule):
+class AVFineTuneSystem(pl.LightningModule):
     def __init__(
         self,
         *,

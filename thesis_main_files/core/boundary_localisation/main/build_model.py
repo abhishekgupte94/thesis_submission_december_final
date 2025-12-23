@@ -85,10 +85,3 @@ class BatfdToVACLAdapter(nn.Module):
         return vacl_out
 
 
-# prb = batfd_prb_extractor(video, audio)   # your existing PRB extraction
-# vacl_out = adapter.adapt_and_run_vacl(
-#     prb,
-#     vacl_wrapper=vacl_wrapper,            # your VACLWrapper instance
-#     target_S=desired_S,
-#     return_intermediates=False,
-# )

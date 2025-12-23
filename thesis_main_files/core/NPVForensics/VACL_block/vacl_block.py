@@ -243,11 +243,11 @@ class VACLVA(nn.Module):
         if return_intermediates:
             out.update(
                 {
-                    "J_va": J_va,
-                    "M_v": M_v,
-                    "M_a": M_a,
-                    "H_v": H_v,
-                    "H_a": H_a,
+                    # "J_va": J_va,
+                    # "M_v": M_v,
+                    # "M_a": M_a,
+                    # "H_v": H_v,
+                    # "H_a": H_a,
                     "X_v_att": X_v_att,
                     "X_a_att": X_a_att,
                 }

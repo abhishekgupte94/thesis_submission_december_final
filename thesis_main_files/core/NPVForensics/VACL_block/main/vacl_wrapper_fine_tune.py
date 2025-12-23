@@ -107,21 +107,14 @@ class VACLWrapper(nn.Module):
         # - Some implementations accept compute_infonce, some don't.
         # - We try the richer signature first, then fallback safely.
         # ============================================================
-        try:
-            vacl_out = self.vacl(
-                X_v=X_v,
-                X_a=X_a,
-                # compute_infonce=bool(compute_infonce),  # [PATCHED] enable if supported
-                return_intermediates=bool(return_intermediates),
-                **kwargs,
-            )
-        except TypeError:
-            vacl_out = self.vacl(
-                X_v=X_v,
-                X_a=X_a,
-                return_intermediates=bool(return_intermediates),
-                **kwargs,
-            )
+        vacl_out = self.vacl(
+            X_v=X_v,
+            X_a=X_a,
+            # compute_infonce=bool(compute_infonce),
+            return_intermediates=False,
+            **kwargs,
+        )
+
 
         # ============================================================
         # [KEPT] Normalize output container
@@ -144,26 +137,17 @@ class VACLWrapper(nn.Module):
         # [PATCHED] Standardize required Stage-2 keys
         # ============================================================
         # ---- loss / L_cor
-        L_cor = out.get("L_cor", out.get("L_corr", out.get("loss_cor", out.get("loss", out.get("loss_total", None)))))
-        if L_cor is None:
-            raise KeyError("VACLVA output missing correlation/loss key among ['L_cor','loss','loss_total',...]")
+        L_cor = out.get("L_cor")
 
         out["loss_vacl"] = L_cor
-        out["loss"] = L_cor  # alias
-        out["L_cor"] = L_cor  # [PATCHED] ensure explicitly present
+
 
         # ---- attention maps (REQUIRED)
         if "X_v_att" not in out or "X_a_att" not in out:
             raise KeyError("VACLVA output must contain 'X_v_att' and 'X_a_att' for Stage-2 head.")
-        out["X_v_att"] = out["X_v_att"]
-        out["X_a_att"] = out["X_a_att"]
 
-        # ---- InfoNCE scalar (REQUIRED by system_fine.py)
-        # l_infonce = out.get("l_infonce", out.get("loss_infonce", out.get("loss_nce", None)))
-        # if l_infonce is None:
-        #     [PATCHED] Non-breaking default: emit 0 scalar on same device/dtype as L_cor
-            # l_infonce = L_cor.new_zeros(())
-        # out["l_infonce"] = l_infonce
+
+
 
         # ============================================================
         # [KEPT] Strip heavy intermediates

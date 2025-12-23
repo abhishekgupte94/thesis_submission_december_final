@@ -55,7 +55,7 @@ class FinetuneArchitectureConfig:
     # [KEPT] Unifier dims
     # ------------------------------------------------------------
     vacl_s_out: int = 64
-    vacl_d_v: int = 256
+    vacl_d_v: int = 768
     vacl_d_a: int = 768
 
     # ------------------------------------------------------------
@@ -68,10 +68,9 @@ class FinetuneArchitectureConfig:
     # ------------------------------------------------------------
     # [ADDED] Future hook toggles
     # ------------------------------------------------------------
-    enable_new_vacl_features: bool = False  # keep OFF until you paste the new wrapper feature API
 
 
-class VACLFinetuneArchitecture(nn.Module):
+class FinetuneArchitecture(nn.Module):
     def __init__(
         self,
         *,
@@ -96,16 +95,13 @@ class VACLFinetuneArchitecture(nn.Module):
 
         ## TOKENIZER NEEDS TO BE FROZEN IN THE FINE TUNE ARCHITECTURE
         self.pre_vacl_unifier = PreVACLTokenUnifier(
-            c_v_in=c_v_in,
-            c_a_in=c_a_in,
+            c_v_in=c_v_in,  # e.g., 256
+            c_a_in=c_a_in,  # e.g., 768
             cfg=TokenUnifierForVACLConfig(
-                s_out=self.cfg.vacl_s_out,
-                d_v=self.cfg.vacl_d_v,
-                d_a=self.cfg.vacl_d_a,
-                n_heads=4,
-                attn_dropout=0.0,
-                proj_dropout=0.0,
-                share_queries=False,
+                interp_mode="linear",
+                align_corners=False,
+                grid_hw=(7, 7),
+                audio_tokens=49,
             ),
         )
 
@@ -115,25 +111,25 @@ class VACLFinetuneArchitecture(nn.Module):
         # ============================================================
         ### CONFIG NEEDS TO BE ADDED LIKE pretrain_architecture.py
 
-        self.vacl = self.vacl = VACLWrapper(
+        self.vacl = VACLWrapper(
             vacl_kwargs=dict(
                 d_v=cfg.vacl_d_v,
                 d_a=cfg.vacl_d_a,
                 seq_len=cfg.vacl_s_out,
-                k=128,),
-            return_intermediates=False)
-        cpe = FaceAudioCommonSpaceWrapper(
-            d_a=768,  # audio feature dimension
-            d_f=256,  # face / video feature dimension
-            d_common=512,  # shared embedding dimension
+                k=64, ),
+            return_intermediates=False
+        )
+
+        self.common_proj = FaceAudioCommonSpaceWrapper(
+            d_a=cfg.vacl_d_a,  # audio feature dimension
+            d_f=cfg.vacl_d_a,  # face / video feature dimension
+            d_common=cfg.cpe_d_common,  # shared embedding dimension
             tau=0.07,  # temperature for InfoNCE
             loss_weight=1.0
         )
-        # ============================================================
-        # [ADDED] Placeholder container for future feature adapter
-        # (kept as Identity so it never breaks; you can replace later)
-        # ============================================================
-        # self._new_feat_adapter = nn.Identity()
+
+        self.prb_model = PRBModel(...)
+
 
     # ============================================================
     # [ADDED][STUB-IN] New features hook from VACL wrapper
@@ -199,17 +195,9 @@ class VACLFinetuneArchitecture(nn.Module):
             return_intermediates=return_intermediates,
         )
 
-        # ============================================================
-        # [ADDED][STUB-IN] new features from vacl_wrapper (non-breaking)
-        # ============================================================
-        # new_vacl_features = self._extract_new_vacl_features_stub(vacl_out)
 
-        # ============================================================
-        # [PATCHED] Stage-2 standardized outputs
-        # Must match system_fine.py expectations:
-        #   "X_v_att", "X_a_att", "L_cor", "l_infonce"
-        # ============================================================
         out: Dict[str, Any] = {}
+
 
         # ------------------------------------------------------------
         # [REQUIRED] Attention maps
