@@ -96,7 +96,7 @@ def parse_args() -> argparse.Namespace:
     # ============================================================
     # [ADDED][STAGE-2] Validation memory guards
     # ============================================================
-    p.add_argument("--val-auc-thresholds", type=int, default=256)
+    p.add_argument("--val-auc-thresholds", type=Tuple[float, ...], default= (0.5,))
     p.add_argument("--val-metric-cap-batches", type=int, default=200)
 
     # ============================================================
@@ -351,7 +351,7 @@ def main() -> None:
             # ------------------------------------------------------------
             stage2_pool=getattr(local, 'stage2_pool', 'mean'),
             stage2_use_layernorm=bool(getattr(local, 'stage2_use_layernorm', False)),
-            stage2_mlp_hidden=int(getattr(local, 'stage2_mlp_hidden', -1)),
+            stage2_mlp_hidden=int(getattr(local, 'stage2_mlp_hidden', 256)),
             stage2_dropout=float(getattr(local, 'stage2_dropout', 0.0)),
             # ------------------------------------------------------------
             # [GRID SEARCH] Optimizer param-groups
