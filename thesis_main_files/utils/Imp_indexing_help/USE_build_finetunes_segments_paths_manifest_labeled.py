@@ -2,11 +2,11 @@
 # utils/Imp_indexing_help/build_finetune_segment_paths_manifest.py
 # ============================================================
 # Build a fast per-batch manifest of segment paths for FINE-TUNE:
-#   - audio_96 pt (base)
-#   - audio_2048 pt (paired by name)
-#   - video pt tensor
+#   - audio_96 pt (base)      : <audio_root>/<clip_id>/<clip_id>_<seg>.pt
+#   - audio_2048 pt (paired)  : <audio_root>/<clip_id>/<clip_id>_<seg>__2048.pt
+#   - video pt tensor         : <video_root>/(<split>/)?<clip_id>/seg_0007/seg_0007.pt
 #
-# Output (written into <batch_dir>/segment_paths_finetune.csv):
+# Output (written into <batch_dir>/<out_csv>):
 #   clip_id, seg_idx, audio96_rel, audio2048_rel, video_rel, label
 # ============================================================
 
@@ -23,11 +23,11 @@ _AUDIO_RE = re.compile(r"^(?P<clip>.+)_(?P<idx>\d{4})\.pt$")
 
 
 # --------------------------------------------------------------------------------------
-# [ADDED] Optional label lookup (clip_id -> label) from a metadata CSV
+# Label map: labels_csv["filename"] is clip_id WITHOUT extension (clip-level labels)
 # --------------------------------------------------------------------------------------
-def _normalize_clip_key(x: str) -> str:
-    x = x.strip()
-    x = os.path.basename(x)
+def _normalize_clip_id(x: str) -> str:
+    x = str(x).strip().replace("\\", "/")
+    x = os.path.basename(x)  # tolerate accidental paths
     if x.lower().endswith(".mp4"):
         x = x[:-4]
     return x
@@ -53,7 +53,7 @@ def load_label_map(
         if label_col not in (r.fieldnames or []):
             raise KeyError(f"Missing column '{label_col}' in labels csv: {csv_path}")
         for row in r:
-            key = _normalize_clip_key(str(row[filename_col]))
+            key = _normalize_clip_id(row[filename_col])
             lbl = str(row[label_col]).strip()
             if key:
                 m[key] = lbl
@@ -61,11 +61,17 @@ def load_label_map(
 
 
 def _resolve_audio_2048_path(audio_96_path: Path) -> Path:
+    # <clip>_<seg>.pt  ->  <clip>_<seg>__2048.pt
     return audio_96_path.with_name(audio_96_path.stem + "__2048" + audio_96_path.suffix)
 
 
+# --------------------------------------------------------------------------------------
+# [CHANGED] Audio iterator: NESTED structure
+#   audio_root/<clip_id>/<clip_id>_0007.pt
+#   audio_root/<clip_id>/<clip_id>_0007__2048.pt
+# --------------------------------------------------------------------------------------
 def iter_base_audio96(audio_root: Path) -> Iterator[Tuple[str, int, Path]]:
-    """Yield (clip_id, seg_idx, audio96_pt_path) for base audio_96 files only."""
+    """Yield (clip_id, seg_idx, audio96_pt_path) for base (non-__2048) audio files inside audio_root/<clip_id>/."""
     with os.scandir(audio_root) as it:
         for clip_ent in it:
             if not clip_ent.is_dir():
@@ -91,16 +97,35 @@ def iter_base_audio96(audio_root: Path) -> Iterator[Tuple[str, int, Path]]:
                     yield clip_id, seg_idx, Path(f_ent.path)
 
 
+# --------------------------------------------------------------------------------------
+# Video clip dir resolver:
+#   video_root/<clip_id>/...
+#   OR video_root/<split>/<clip_id>/...
+# (labels do NOT depend on split/segment)
+# --------------------------------------------------------------------------------------
+def resolve_video_clip_dir(video_root: Path, clip_id: str) -> Path:
+    direct = video_root / clip_id
+    if direct.exists():
+        return direct
+
+    candidates = [p for p in video_root.glob(f"*/{clip_id}") if p.is_dir()]
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        return sorted(candidates)[0]  # deterministic
+    return direct  # will fail existence checks later
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--offline-root", type=str, required=True)
     ap.add_argument("--batch-name", type=str, required=True)
     ap.add_argument("--audio-dirname", type=str, default="audio")
     ap.add_argument("--video-dirname", type=str, default="video_face_crops")
-    ap.add_argument("--out-csv", type=str, default="segment_index_finetune.csv")  # [CHANGED]
+    ap.add_argument("--out-csv", type=str, default="segment_index_finetune.csv")
     ap.add_argument("--strict", action="store_true", default=False)
-    # [ADDED] label enrichment
-    ap.add_argument("--labels-csv", type=str, default=None, help="CSV with columns 'filename' and 'label' to enrich manifest")
+
+    ap.add_argument("--labels-csv", type=str, default=None, help="CSV with columns 'filename' and 'label'")
     ap.add_argument("--labels-filename-col", type=str, default="filename")
     ap.add_argument("--labels-label-col", type=str, default="label")
     args = ap.parse_args()
@@ -117,7 +142,6 @@ def main() -> None:
     out_path = batch_dir / args.out_csv
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # [ADDED] Load label map once (clip_id stem -> label)
     label_map = load_label_map(
         Path(args.labels_csv) if args.labels_csv else None,
         filename_col=args.labels_filename_col,
@@ -136,7 +160,8 @@ def main() -> None:
                     raise FileNotFoundError(f"Missing audio_2048: {a2048}")
                 continue
 
-            v_pt = video_root / clip_id / f"seg_{seg_idx:04d}" / f"seg_{seg_idx:04d}.pt"
+            v_clip_dir = resolve_video_clip_dir(video_root, clip_id)
+            v_pt = v_clip_dir / f"seg_{seg_idx:04d}" / f"seg_{seg_idx:04d}.pt"
             if not v_pt.exists():
                 if args.strict:
                     raise FileNotFoundError(f"Missing video pt: {v_pt}")
@@ -146,7 +171,9 @@ def main() -> None:
             a2048_rel = str(a2048.resolve().relative_to(batch_dir.resolve()))
             v_rel = str(v_pt.resolve().relative_to(batch_dir.resolve()))
 
-            label = label_map.get(_normalize_clip_key(clip_id), "")
+            # clip-level label lookup
+            label = label_map.get(_normalize_clip_id(clip_id), "")
+
             w.writerow([clip_id, seg_idx, a96_rel, a2048_rel, v_rel, label])
             wrote += 1
 
