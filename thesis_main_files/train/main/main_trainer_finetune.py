@@ -96,7 +96,7 @@ def parse_args() -> argparse.Namespace:
     # ============================================================
     # [ADDED][STAGE-2] Validation memory guards
     # ============================================================
-    p.add_argument("--val-auc-thresholds", type=Tuple[float, ...], default= (0.5,))
+    p.add_argument("--val-auc-thresholds", type=tuple, default= (0.5,))
     p.add_argument("--val-metric-cap-batches", type=int, default=200)
 
     # ============================================================
