@@ -29,7 +29,7 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger
 
 # NOTE: keep your existing imports below as-is in your repo:
-from scripts.dataloaders.dataloader_fine_tune import SegmentDataModule  # [MIRRORED] Stage-2 dataloader
+from scripts.dataloaders.dataloader_fine_tune import SegmentDataModuleFineTune,SegmentDataModuleFineTuneConfig # [MIRRORED] Stage-2 dataloader
 from core.training_systems.training_systems.system_finetune import AVFineTuneSystem  # [MIRRORED] Stage-2 system
 
 # [MIRRORED][FROM STAGE-1] Backbone builder helper (keeps init identical)
@@ -82,7 +82,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--bucket-size", type=int, default=8)
     p.add_argument("--num-workers", type=int, default=8)
 
-    p.add_argument("--lr", type=float, default=1e-4)
+    p.add_argument("--lr", type=float, default=1e-6)
     p.add_argument("--weight-decay", type=float, default=1e-2)
 
     # ============================================================
@@ -268,15 +268,16 @@ def main() -> None:
     # ============================================================
     # DataModule (MIRRORED)
     # ============================================================
-    dm = SegmentDataModule(
-        offline_root=offline_root,
+    cfg_dl = SegmentDataModuleFineTuneConfig(offline_root=offline_root,
         batch_name=args.batch_name,
         batch_size=args.batch_size,
         bucket_size=args.bucket_size,
         num_workers=args.num_workers,
         # pin_memory=True,
         # persistent_workers=True,
-        val_split=args.val_split,
+        val_split=args.val_split,)
+    dm = SegmentDataModuleFineTune(
+            cfg= cfg_dl
     )
 
     # ============================================================
