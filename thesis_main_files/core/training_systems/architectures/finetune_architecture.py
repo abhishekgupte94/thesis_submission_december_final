@@ -128,7 +128,7 @@ class FinetuneArchitecture(nn.Module):
             loss_weight=1.0
         )
 
-        self.prb_model = PRBModel(...)
+        # self.prb_model = PRBModel(...)
 
 
     # ============================================================

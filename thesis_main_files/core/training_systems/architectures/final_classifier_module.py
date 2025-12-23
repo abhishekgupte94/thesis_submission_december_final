@@ -32,9 +32,9 @@ class Stage2AVClassifierHead(nn.Module):
         P:      (B, C)
     """
 
-    def __init__(self, k: int, cfg: Stage2HeadConfig = Stage2HeadConfig()):
+    def __init__(self, cfg: Stage2HeadConfig = Stage2HeadConfig()):
         super().__init__()
-        self.k = int(k)
+        # self.k = int(k)
         self.cfg = cfg
 
         in_dim = 2 * self.k
@@ -56,8 +56,8 @@ class Stage2AVClassifierHead(nn.Module):
     def _pool(self, X: torch.Tensor) -> torch.Tensor:
         if X.ndim != 3:
             raise ValueError(f"[Stage2AVClassifierHead] Expected (B,k,S), got {tuple(X.shape)}")
-        if X.shape[1] != self.k:
-            raise ValueError(f"[Stage2AVClassifierHead] Expected channel dim k={self.k}, got {X.shape[1]}")
+        # if X.shape[1] != self.k:
+        #     raise ValueError(f"[Stage2AVClassifierHead] Expected channel dim k={self.k}, got {X.shape[1]}")
 
         if self.cfg.pool == "mean":
             return X.mean(dim=-1)

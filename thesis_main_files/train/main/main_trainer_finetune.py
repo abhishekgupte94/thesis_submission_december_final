@@ -306,7 +306,7 @@ def main() -> None:
 # ============================================================
         # [STAGE-2 MODEL] Instantiate your Stage-2 finetune architecture HERE
         # IMPORTANT: This mirrors Stage-1: build pure nn.Module, then wrap with Lightning system.
-        from core.training_systems.architectures.vacl_finetune_architecture import (
+        from core.training_systems.architectures.finetune_architecture import (
             FinetuneArchitecture,
             FinetuneArchitectureConfig,
         )

@@ -35,11 +35,11 @@ import torch.nn.functional as F
 # ============================================================
 # [KEPT] Stage-2 head (binary classifier)
 # ============================================================
-from core.training_systems.architectures.final_classifier_module import Stage2AVClassifierHead
+from core.training_systems.architectures.final_classifier_module import Stage2AVClassifierHead, Stage2HeadConfig
 
 
 @dataclass
-class FineTuneSystemConfig:
+class AVFineTuneSystemConfig:
     # Loss weights (names preserved)
     omega: float = 1.0     # weight for correlation/VACL loss
     lambda_: float = 0.1   # weight for InfoNCE/CPE loss
@@ -107,11 +107,19 @@ class AVFineTuneSystem(pl.LightningModule):
         # ============================================================
         # [KEPT] Stage-2 head
         # ============================================================
-        self.stage2_head = Stage2AVClassifierHead(
+        # ============================================================
+        # [PATCH] Stage2 head construction – FIXED kwargs mismatch
+        # ============================================================
+
+        self.stage2_cfg = Stage2HeadConfig(
             pool=str(stage2_pool),
             use_layernorm=bool(stage2_use_layernorm),
             mlp_hidden=stage2_mlp_hidden,
             dropout=float(stage2_dropout),
+        )
+
+        self.stage2_head = Stage2AVClassifierHead(
+            cfg=self.stage2_cfg
         )
 
         # ============================================================
@@ -293,9 +301,5 @@ class AVFineTuneSystem(pl.LightningModule):
 
     def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> Dict[str, Any]:
         return self._shared_step(batch, stage="val")
-
-    # ============================================================
-    # [KEPT] Optional alias to avoid breaking older code
-    # ============================================================
 
 
