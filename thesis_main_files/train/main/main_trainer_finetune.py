@@ -338,7 +338,7 @@ def main() -> None:
             # [STAGE-2] Loss weights
             # ------------------------------------------------------------
             omega=getattr(local, 'omega', 1.0),
-            lambda_=getattr(local, 'lambda_', 1.0),
+            lambda_cpe=getattr(local, 'lambda_', 1.0),
             alpha=getattr(local, 'alpha', 0.0),
             beta=getattr(local, 'beta', 1.0),
             # ------------------------------------------------------------
