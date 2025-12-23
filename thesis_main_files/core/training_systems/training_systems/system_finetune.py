@@ -120,8 +120,8 @@ class AVFineTuneSystem(pl.LightningModule):
         )
 
         self.stage2_head = Stage2AVClassifierHead(
-            d_v=self.model.vacl_d_v,  # or whatever variable holds video feature dim
-            d_a=self.model.vacl_d_a,  # or whatever variable holds audio feature dim
+            d_v=self.model.cfg.vacl_d_v,  # or whatever variable holds video feature dim
+            d_a=self.model.cfg.vacl_d_a,  # or whatever variable holds audio feature dim
             cfg=self.stage2_cfg
         )
 
