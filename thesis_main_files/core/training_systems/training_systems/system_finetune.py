@@ -116,9 +116,12 @@ class AVFineTuneSystem(pl.LightningModule):
             use_layernorm=bool(stage2_use_layernorm),
             mlp_hidden=stage2_mlp_hidden,
             dropout=float(stage2_dropout),
+            num_classes=1,  # SINGLE logit for BCEWithLogitsLoss
         )
 
         self.stage2_head = Stage2AVClassifierHead(
+            d_v=self.d_v,  # or whatever variable holds video feature dim
+            d_a=self.d_a,  # or whatever variable holds audio feature dim
             cfg=self.stage2_cfg
         )
 
@@ -265,7 +268,7 @@ class AVFineTuneSystem(pl.LightningModule):
         l_infonce = out["l_infonce"]
 
         # Stage-2 logits from head
-        logits = self.stage2_head(X_v_att=X_v_att, X_a_att=X_a_att)
+        logits = self.stage2_head(X_v_att=X_v_att, X_a_att=X_a_att)  # (B,1)
 
         # Labels
         y = batch.get("label", None)
@@ -273,7 +276,7 @@ class AVFineTuneSystem(pl.LightningModule):
             # Allow pure forward/profiling without labels
             loss_cls = torch.zeros((), device=logits.device, dtype=logits.dtype)
         else:
-            # BCEWithLogitsLoss expects float
+            # BCEWithLogitsLoss expects float targets of shape (B,1)
             y = y.float().view(-1, 1)
             loss_cls = self._bce(logits, y)
 
