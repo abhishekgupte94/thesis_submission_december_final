@@ -191,24 +191,19 @@ def main() -> None:
                 continue
 
             # keep your original expected segment tensor location
-            v_pt = v_clip_dir / f"seg_{seg_idx:04d}" / f"seg_{seg_idx:04d}.pt"
-            if not v_pt.exists():
-                counters["skip_missing_video_pt"] += 1
-                if args.debug and verbose_left > 0:
-                    print(f"[DEBUG][VIDEO] missing v_pt={v_pt}")
-                    try:
-                        kids = sorted([x.name for x in v_clip_dir.iterdir()])[:15]
-                        print(f"[DEBUG][VIDEO] contents of {v_clip_dir} (first 15): {kids}")
-                    except Exception:
-                        pass
-                    verbose_left -= 1
+            # [CHANGED] video is mp4 segments, not pt tensors
+            # [CHANGED] video is mp4 segments, not pt tensors
+            v_mp4 = v_clip_dir / f"seg_{seg_idx:04d}" / f"seg_{seg_idx:04d}.mp4"
+            if not v_mp4.exists():
                 if args.strict:
-                    raise FileNotFoundError(f"Missing video pt: {v_pt}")
+                    raise FileNotFoundError(f"Missing video mp4: {v_mp4}")
                 continue
+
+            v_rel = str(v_mp4.resolve().relative_to(batch_dir.resolve()))
 
             a96_rel = str(a96.resolve().relative_to(batch_dir.resolve()))
             a2048_rel = str(a2048.resolve().relative_to(batch_dir.resolve()))
-            v_rel = str(v_pt.resolve().relative_to(batch_dir.resolve()))
+            # v_rel = str(v_mp4.resolve().relative_to(batch_dir.resolve()))
 
             label = label_map.get(_normalize_clip_id(clip_id), "")
             if label == "":
