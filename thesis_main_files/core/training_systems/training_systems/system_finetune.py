@@ -75,7 +75,7 @@ class AVFineTuneSystem(pl.LightningModule):
         beta: float = 0.0,
         stage2_pool: str = "mean",
         stage2_use_layernorm: bool = False,
-        stage2_mlp_hidden: Optional[int] = None,
+        stage2_mlp_hidden: Optional[int] = 256,
         stage2_dropout: float = 0.0,
         lr_head: Optional[float] = None,
         weight_decay_head: Optional[float] = None,
