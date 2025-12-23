@@ -271,7 +271,6 @@ def main() -> None:
     cfg_dl = SegmentDataModuleFineTuneConfig(offline_root=offline_root,
         batch_name=args.batch_name,
         batch_size=args.batch_size,
-        bucket_size=args.bucket_size,
         num_workers=args.num_workers,
         # pin_memory=True,
         # persistent_workers=True,
