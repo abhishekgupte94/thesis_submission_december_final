@@ -28,7 +28,8 @@ import torch.nn as nn
 
 from torchmetrics.classification import BinaryAccuracy, BinaryAUROC, BinaryF1Score
 
-from core.training_systems.architectures.final_classifier_module import Stage2AVClassifierHead
+# from core.training_systems.architectures.final_classifier_module import Stage2AVClassifierHead
+from core.training_systems.architectures.final_classifier_module import Stage2AVClassifierHead, Stage2HeadConfig
 
 
 @dataclass
@@ -51,12 +52,20 @@ class AVFineTuneEvaluator(pl.LightningModule):
         self.model = model
         self.cfg = cfg
 
-        self.stage2_head = Stage2AVClassifierHead(
-            pool=str(cfg.pool),
-            use_layernorm=bool(cfg.use_layernorm),
-            mlp_hidden=cfg.mlp_hidden,
-            dropout=float(cfg.dropout),
+        # ============================================================
+        # [PATCHED] Stage-2 head config + lazy head build (dims inferred)
+        # ============================================================
+        self.stage2_cfg = Stage2HeadConfig(
+            pool=str(self.cfg.pool),
+            use_layernorm=bool(self.cfg.use_layernorm),
+            mlp_hidden=self.cfg.mlp_hidden,
+            dropout=float(self.cfg.dropout),
+            num_classes=1,  # SINGLE logit for BCEWithLogitsLoss
         )
+
+        # We do NOT know d_v/d_a at __init__ time in a pure evaluator.
+        # Build the head lazily on the first eval step once we see X_v_att/X_a_att.
+        self.stage2_head: Optional[Stage2AVClassifierHead] = None
 
         self._bce = nn.BCEWithLogitsLoss()
         self._pred_rows: List[Dict[str, Any]] = []
@@ -78,7 +87,7 @@ class AVFineTuneEvaluator(pl.LightningModule):
         for p in self.stage2_head.parameters():
             p.requires_grad = False
 
-        self.save_hyperparameters(ignore=["model", "stage2_head"])
+        self.save_hyperparameters(ignore=["model"])
 
     # Keep same behavior as your fine-tune system: move tensors, keep strings/ints as-is
     def transfer_batch_to_device(self, batch: Any, device: torch.device, dataloader_idx: int) -> Any:
@@ -98,26 +107,37 @@ class AVFineTuneEvaluator(pl.LightningModule):
         X_v_att = out["X_v_att"]
         X_a_att = out["X_a_att"]
 
+        # ============================================================
+        # [PATCHED] Lazily instantiate Stage-2 head once we know dims
+        # ============================================================
+        if self.stage2_head is None:
+            d_v = int(X_v_att.shape[1])
+            d_a = int(X_a_att.shape[1])
+            self.stage2_head = Stage2AVClassifierHead(d_v=d_v, d_a=d_a, cfg=self.stage2_cfg)
+
+            # Freeze head params (pure eval)
+            for p in self.stage2_head.parameters():
+                p.requires_grad = False
+
+        # Stage-2 logits from head
         logits = self.stage2_head(X_v_att=X_v_att, X_a_att=X_a_att)  # (B,1)
         probs = torch.sigmoid(logits)  # (B,1)
 
+        # Labels
         y = batch.get("label", None)
         loss = None
 
         if self.cfg.compute_loss and y is not None:
-            y_f = y.float().view(-1, 1)
+            y_f = y.float().view(-1, 1)  # (B,1)
             loss = self._bce(logits, y_f)
             self.log(f"{stage}/bce", loss, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
 
         # ============================================================
-        # [ADDED] Metrics updated per batch, computed/logged per epoch
+        # Metrics updated per batch, computed/logged per epoch
         # ============================================================
-        if y is not None:
-            # torchmetrics expects:
-            #   probs: (B,) float in [0,1]
-            #   target: (B,) int {0,1}
-            y_bin = y.int().view(-1)
-            p = probs.view(-1)
+        if y is not None and stage in ("val", "test"):
+            y_bin = y.int().view(-1)  # (B,)
+            p = probs.view(-1)  # (B,)
 
             if stage == "val":
                 self.val_acc.update(p, y_bin)
