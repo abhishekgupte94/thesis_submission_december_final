@@ -105,7 +105,7 @@ def _lavdf_official_preprocess_from_mp4(
     """
     # [IMPORTANT] Use YOUR attached dataset script + official utils
     _ensure_lavdf_import_on_syspath()
-    from dataset.model import Lavdf  # type: ignore
+    from lavdf import Lavdf  # type: ignore
     from utils import read_video, padding_video, padding_audio, resize_video  # type: ignore
     from einops import rearrange  # type: ignore
 
