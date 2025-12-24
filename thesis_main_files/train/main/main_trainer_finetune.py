@@ -364,17 +364,17 @@ def main() -> None:
             return t[:n].tolist()
 
         # pick a backbone weight that MUST exist in stage-1
-        w = model.common_proj.proj_heads.weight
-        print("[CKPT TEST] BEFORE:", _sig(w))
-
-        ckpt = torch.load(args.ckpt_path, map_location="cpu")
-        sd = ckpt["state_dict"]
-        sd = {k.replace("model.", ""): v for k, v in sd.items()}
-
-        missing, unexpected = model.load_state_dict(sd, strict=False)
-
-        print("[CKPT TEST] AFTER :", _sig(w))
-        print("[CKPT TEST] missing:", len(missing), "unexpected:", len(unexpected))
+        # w = model.common_proj.proj_heads.weight
+        # print("[CKPT TEST] BEFORE:", _sig(w))
+        #
+        # ckpt = torch.load(args.ckpt_path, map_location="cpu")
+        # sd = ckpt["state_dict"]
+        # sd = {k.replace("model.", ""): v for k, v in sd.items()}
+        #
+        # missing, unexpected = model.load_state_dict(sd, strict=False)
+        #
+        # print("[CKPT TEST] AFTER :", _sig(w))
+        # print("[CKPT TEST] missing:", len(missing), "unexpected:", len(unexpected))
         # ============================================================
 
         # ---- Lightning System (mirror Stage-1 wiring) ----
