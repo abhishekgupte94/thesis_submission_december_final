@@ -81,6 +81,7 @@ def parse_args() -> argparse.Namespace:
 
     # optional prediction dump (predict mode)
     p.add_argument("--save-preds-path", type=str, default="")
+    p.add_argument("--csv-index", type=str, default="segment_index_finetune.csv")
 
     return p.parse_args()
 
@@ -124,7 +125,7 @@ def main() -> None:
             Path(evaluation_root)
             / args.batch_name
             / args.csv_index
-        ))
+              ))
         # if your config supports them, they should remain enabled for speed:
         # pin_memory=True,
         # persistent_workers=(args.num_workers > 0),
