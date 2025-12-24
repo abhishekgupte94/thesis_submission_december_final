@@ -337,7 +337,40 @@ def main() -> None:
         )
 
 
-
+        # ---- Lightning System (mirror Stage-1 wiring) ----
+        system = AVFineTuneSystem(
+            model=model,
+            lr=local.lr,
+            weight_decay=local.weight_decay,
+            # ------------------------------------------------------------
+            # [STAGE-2] Loss weights
+            # ------------------------------------------------------------
+            omega=getattr(local, 'omega', 1.0),
+            lambda_cpe=getattr(local, 'lambda_', 1.0),
+            alpha=getattr(local, 'alpha', 0.0),
+            beta=getattr(local, 'beta', 1.0),
+            # ------------------------------------------------------------
+            # [STAGE-2] Validation guards
+            # ------------------------------------------------------------
+            val_auc_thresholds=getattr(local, 'val_auc_thresholds', 256),
+            val_metric_cap_batches=getattr(local, 'val_metric_cap_batches', 200),
+            # ------------------------------------------------------------
+            # [GRID SEARCH] Head hyperparams
+            # ------------------------------------------------------------
+            stage2_pool=getattr(local, 'stage2_pool', 'mean'),
+            stage2_use_layernorm=bool(getattr(local, 'stage2_use_layernorm', False)),
+            stage2_mlp_hidden=int(getattr(local, 'stage2_mlp_hidden', 256)),
+            stage2_dropout=float(getattr(local, 'stage2_dropout', 0.0)),
+            # ------------------------------------------------------------
+            # [GRID SEARCH] Optimizer param-groups
+            # ------------------------------------------------------------
+            lr_head=getattr(local, 'lr_head', None),
+            weight_decay_head=getattr(local, 'weight_decay_head', None),
+            lr_backbone=getattr(local, 'lr_backbone', None),
+            weight_decay_backbone=getattr(local, 'weight_decay_backbone', None),
+            enable_energy_tracking=bool(local.enable_energy_tracking),
+            enable_flops_profile=bool(local.enable_flops_profile),
+        )
 
         # [MIRRORED] runtime knobs
 
@@ -386,6 +419,10 @@ def main() -> None:
             every_n_epochs=1,
             filename="epoch={epoch}-step={step}",
         )
+        # load stage-1 weights
+        if args.ckpt_path:
+            ckpt = torch.load(args.ckpt_path, map_location="cpu")
+            system.load_state_dict(ckpt["state_dict"], strict=False)
 
         trainer = pl.Trainer(
             accelerator="gpu",
@@ -404,46 +441,6 @@ def main() -> None:
             num_sanity_val_steps=num_sanity_val_steps,
         )
 
-        # [ADDED] Lightning-style resume
-        ckpt_path = args.ckpt_path or None
-
-        print(f"[main_trainer_finetune] ckpt_path = {ckpt_path or 'NONE'}")
-
-        # ---- Lightning System (already in your code) ----
-        system = AVFineTuneSystem(
-            model=model,
-            lr=local.lr,
-            weight_decay=local.weight_decay,
-            omega=local.omega,
-            lambda_cpe=local.lambda_,
-            alpha=local.alpha,
-            beta=local.beta,
-            stage2_pool=local.stage2_pool,
-            stage2_use_layernorm=local.stage2_use_layernorm,
-            stage2_mlp_hidden=local.stage2_mlp_hidden,
-            stage2_dropout=local.stage2_dropout,
-            lr_head=local.lr_head,
-            weight_decay_head=local.weight_decay_head,
-            lr_backbone=local.lr_backbone,
-            weight_decay_backbone=local.weight_decay_backbone,
-            enable_energy_tracking=local.enable_energy_tracking,
-            enable_flops_profile=local.enable_flops_profile,
-        )
-
-        # ============================================================
-        # 🔑 LOAD STAGE-1 CHECKPOINT HERE (TRANSFER, NOT RESUME)
-        # ============================================================
-        if args.ckpt_path:
-            ckpt = torch.load(args.ckpt_path, map_location="cpu")
-
-            missing, unexpected = system.load_state_dict(
-                ckpt["state_dict"],
-                strict=False,  # REQUIRED
-            )
-
-            print("[Stage-2 init] loaded Stage-1 weights")
-            print("[Stage-2 init] missing keys:", missing)
-            print("[Stage-2 init] unexpected keys:", unexpected)
 
         trainer.fit(system, datamodule=dm)
 
