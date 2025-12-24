@@ -43,6 +43,41 @@ ModelType = Literal["batfd", "batfd_plus"]
 # ============================================================
 # [KEPT] Robust LAV-DF import helper (same spirit as your wrapper)
 # ============================================================
+def _ensure_lavdf_import_on_syspath() -> None:
+    """
+    Adds:
+      <repo_root>/external/LAV-DF
+      <repo_root>/external/LAV-DF/model
+      <repo_root>/external/LAV-DF/dataset
+    """
+    import sys
+
+    anchor = Path(__file__).resolve()
+    repo_root = None
+    for p in [anchor, *anchor.parents]:
+        if p.name == "thesis_main_files":
+            repo_root = p
+            break
+    if repo_root is None:
+        repo_root = Path.cwd().resolve()
+
+    base = repo_root / "external" / "LAV-DF"
+
+    def _add(pp: Path) -> None:
+        if pp.is_dir():
+            s = str(pp.resolve())
+            if s not in sys.path:
+                sys.path.insert(0, s)
+
+    if not (base.is_dir() and (base / "model").is_dir()):
+        raise ImportError(
+            "Could not locate LAV-DF under thesis_main_files/external/LAV-DF. "
+            "Expected external/LAV-DF/model to exist."
+        )
+
+    _add(base)
+    _add(base / "model")
+    _add(base / "dataset")
 
 
 # ============================================================
@@ -189,104 +224,6 @@ class LAVDFInferArchitecture(nn.Module):
         audio_b = torch.stack(audios, dim=0)
         return video_b, audio_b
 
-    # ======================================================================
-    # ===================== [CHANGED BEGIN | OUR PATCH ONLY] =================
-    # Robust extraction for:
-    #   - logits2: (B,2) or (B,T,2)->mean
-    #   - prob_fake: from logits2 (softmax) OR from (B,) / (B,1) (sigmoid or passthrough)
-    # Also supports dict outputs containing tensors.
-    # ======================================================================
-    def _as_batch_vec(self, x: torch.Tensor) -> Optional[torch.Tensor]:
-        if not torch.is_tensor(x):
-            return None
-        if x.ndim == 1:
-            return x
-        if x.ndim == 2 and x.shape[1] == 1:
-            return x[:, 0]
-        return None
-
-    def _prob_from_vec_or_logit(self, v: torch.Tensor) -> torch.Tensor:
-        v = v.float()
-        if torch.isfinite(v).all():
-            mn = float(v.min().detach().cpu())
-            mx = float(v.max().detach().cpu())
-            if mn >= -1e-3 and mx <= 1.0 + 1e-3:
-                return v.clamp(0.0, 1.0)
-        return torch.sigmoid(v)
-
-    def _extract_prob_and_logits2(
-        self, out_raw: Any
-    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
-        logits2: Optional[torch.Tensor] = None
-        prob_fake: Optional[torch.Tensor] = None
-
-        def consider_tensor(t: torch.Tensor) -> None:
-            nonlocal logits2, prob_fake
-
-            # (B,2)
-            if t.ndim == 2 and t.shape[-1] == 2 and logits2 is None:
-                logits2 = t
-                prob_fake = torch.softmax(t.float(), dim=-1)[:, 1]
-                return
-
-            # (B,T,2) -> mean over T
-            if t.ndim == 3 and t.shape[-1] == 2 and logits2 is None:
-                logits2 = t.mean(dim=1)
-                prob_fake = torch.softmax(logits2.float(), dim=-1)[:, 1]
-                return
-
-            # (B,) or (B,1): prob or logit
-            v = self._as_batch_vec(t)
-            if v is not None and prob_fake is None:
-                prob_fake = self._prob_from_vec_or_logit(v)
-                return
-
-        # tensor
-        if torch.is_tensor(out_raw):
-            consider_tensor(out_raw)
-            return prob_fake, logits2
-
-        # dict (common in some wrappers)
-        if isinstance(out_raw, dict):
-            # try common keys first
-            for key in ("logits", "logits2", "pred", "prediction", "out", "y_hat", "prob", "probs", "prob_fake"):
-                if key in out_raw and torch.is_tensor(out_raw[key]):
-                    consider_tensor(out_raw[key])
-                    if prob_fake is not None or logits2 is not None:
-                        return prob_fake, logits2
-            # fallback: scan tensor values
-            for v in out_raw.values():
-                if torch.is_tensor(v):
-                    consider_tensor(v)
-                    if prob_fake is not None or logits2 is not None:
-                        return prob_fake, logits2
-            return prob_fake, logits2
-
-        # tuple/list
-        if isinstance(out_raw, (tuple, list)):
-            # prefer (B,2)
-            for x in reversed(out_raw):
-                if torch.is_tensor(x) and x.ndim == 2 and x.shape[-1] == 2:
-                    consider_tensor(x)
-                    return prob_fake, logits2
-            # then (B,T,2)
-            for x in reversed(out_raw):
-                if torch.is_tensor(x) and x.ndim == 3 and x.shape[-1] == 2:
-                    consider_tensor(x)
-                    return prob_fake, logits2
-            # then (B,) / (B,1)
-            for x in reversed(out_raw):
-                if torch.is_tensor(x):
-                    v = self._as_batch_vec(x)
-                    if v is not None:
-                        consider_tensor(x)
-                        return prob_fake, logits2
-            return prob_fake, logits2
-
-        return prob_fake, logits2
-    # ====================== [CHANGED END | OUR PATCH ONLY] ==================
-    # ======================================================================
-
     # ============================================================
     # Forward
     # ============================================================
@@ -300,7 +237,7 @@ class LAVDFInferArchitecture(nn.Module):
         Returns:
           dict with essentials:
             - "logits2" (if we can reliably extract (B,2))
-            - "prob_fake" (if enabled and extracted)
+            - "prob_fake" (if enabled and logits2 extracted)
             - "raw" (optional: full model output tuple)
             - "y" passed through if present
         """
@@ -341,20 +278,30 @@ class LAVDFInferArchitecture(nn.Module):
             if k in batch:
                 out[k] = batch[k]
 
-        # ======================================================================
-        # ===================== [CHANGED BEGIN | OUR PATCH ONLY] =================
-        # Replace the old logits2-only block with robust extraction that can
-        # produce prob_fake for more output shapes/types.
-        # ======================================================================
-        prob_fake, logits2 = self._extract_prob_and_logits2(out_raw)
+        # ------------------------------------------------------------
+        # [ADDED] Extract a usable (B,2) logits tensor, if possible
+        # (mirrors the robust evaluator idea)
+        # ------------------------------------------------------------
+        logits2 = None
+        if torch.is_tensor(out_raw):
+            if out_raw.ndim == 2 and out_raw.shape[-1] == 2:
+                logits2 = out_raw
+        elif isinstance(out_raw, (tuple, list)):
+            # search from end: (B,2) first, else (B,T,2)->mean
+            for x in reversed(out_raw):
+                if torch.is_tensor(x) and x.ndim == 2 and x.shape[-1] == 2:
+                    logits2 = x
+                    break
+            if logits2 is None:
+                for x in reversed(out_raw):
+                    if torch.is_tensor(x) and x.ndim == 3 and x.shape[-1] == 2:
+                        logits2 = x.mean(dim=1)
+                        break
 
         if logits2 is not None:
             out["logits2"] = logits2
-
-        if self.cfg.return_prob and (prob_fake is not None):
-            out["prob_fake"] = prob_fake
-        # ====================== [CHANGED END | OUR PATCH ONLY] =================
-        # ======================================================================
+            if self.cfg.return_prob:
+                out["prob_fake"] = torch.softmax(logits2, dim=-1)[:, 1]
 
         # ------------------------------------------------------------
         # [ADDED] Optionally include raw tuple for boundary localization usage
