@@ -26,6 +26,15 @@
 #   - masks:         video_mask, audio_96_mask, audio_2048_mask (bool)
 #   - ids:           clip_ids (list[str]), seg_idxs (B,)
 #   - labels:        y (B,) long, y_onehot (B,2) float  OR None if unavailable
+#
+# ============================================================
+# [PATCH NOTES | 2025-12-24]
+# [MODIFIED] Support video stored as .mp4 (no video tensors available).
+#   - CSV fast-path now accepts video_rel ending in .mp4 OR .pt.
+#   - Fallback filesystem discovery looks for seg_XXXX.mp4 (instead of .pt).
+#   - __getitem__ decodes .mp4 via base loader helper:
+#         scripts.dataloaders.dataloader._read_mp4_to_u8_cthw
+#   - Non-breaking: output tensor remains uint8 (3,T,H,W), keys unchanged.
 # ============================================================
 
 from __future__ import annotations
@@ -81,6 +90,39 @@ def _pad_video_u8(v: torch.Tensor, T_max: int) -> torch.Tensor:
     C, T, H, W = v.shape
     pad = torch.zeros((C, T_max - T, H, W), dtype=v.dtype)
     return torch.cat([v, pad], dim=1)
+
+
+# ============================================================
+# [ADDED][PATCH] Video loader supporting BOTH .pt tensors and .mp4 files
+#
+# - .pt: expects (3,T,H,W) tensor
+# - .mp4: decodes to uint8 (3,T,H,W) using base loader helper
+#
+# Non-breaking contract:
+#   returns uint8 (3,T,H,W)
+# ============================================================
+def _load_video_u8_cthw(video_path: Path) -> torch.Tensor:
+    """
+    Returns: uint8 (3, T, H, W)
+    """
+    if video_path.suffix == ".pt":
+        v = torch.load(video_path, map_location="cpu")
+        if not isinstance(v, torch.Tensor):
+            raise TypeError(f"Video .pt did not load a tensor: {video_path}")
+        if v.ndim != 4 or v.shape[0] != 3:
+            raise ValueError(f"Bad video tensor shape (expected 3xTxHxW): {video_path} got {tuple(v.shape)}")
+        return v.to(torch.uint8) if v.dtype != torch.uint8 else v
+
+    if video_path.suffix == ".mp4":
+        # [ADDED][PATCH] Reuse base mp4 decode helper (keeps behavior consistent)
+        from scripts.dataloaders.dataloader import _read_mp4_to_u8_cthw  # noqa: WPS433
+
+        v = _read_mp4_to_u8_cthw(video_path)
+        if not isinstance(v, torch.Tensor) or v.ndim != 4 or v.shape[0] != 3:
+            raise ValueError(f"Bad decoded mp4 tensor shape from: {video_path}")
+        return v.to(torch.uint8) if v.dtype != torch.uint8 else v
+
+    raise ValueError(f"Unsupported video suffix: {video_path.suffix} ({video_path})")
 
 
 # ============================================================
@@ -171,7 +213,7 @@ class SegmentDataset(Dataset):
         if segments_csv is not None:
             self._segments_csv_path = Path(segments_csv)
         else:
-            self._segments_csv_path =  self.batch_dir / "segment_index_finetune.csv"
+            self._segments_csv_path = self.batch_dir / "segment_index_finetune.csv"
 
         # ------------------------------------------------------------
         # [KEPT] Segment-level label dictionary (fine-tune unique)
@@ -183,13 +225,14 @@ class SegmentDataset(Dataset):
                 if self.strict_labels:
                     raise FileNotFoundError(f"segments_csv not found: {self._segments_csv_path}")
             else:
-                self._labels_by_segment = _load_segment_labels_csv(
-                    self._segments_csv_path, strict=self.strict_labels
-                )
+                self._labels_by_segment = _load_segment_labels_csv(self._segments_csv_path, strict=self.strict_labels)
 
         # ------------------------------------------------------------
         # Index tuple:
-        #   (clip_id, seg_idx, audio96_path, audio2048_path, video_pt_path, T_video)
+        #   (clip_id, seg_idx, audio96_path, audio2048_path, video_path, T_video)
+        #
+        # NOTE:
+        #   - video_path may be .pt OR .mp4 after patch.
         # ------------------------------------------------------------
         self.index: List[Tuple[str, int, Path, Path, Path, int]] = []
         self._build_index()
@@ -240,18 +283,35 @@ class SegmentDataset(Dataset):
 
                     a96 = self.batch_dir / a96_rel
                     a2048 = self.batch_dir / a2048_rel
-                    v_pt = self.batch_dir / v_rel
 
-                    if not a96.exists() or not a2048.exists() or not v_pt.exists():
+                    # ------------------------------------------------------------
+                    # [MODIFIED][PATCH] accept video_rel pointing to .pt OR .mp4
+                    # ------------------------------------------------------------
+                    v_path = self.batch_dir / v_rel
+
+                    if not a96.exists() or not a2048.exists() or not v_path.exists():
                         return False
 
-                    # Load once to validate + capture T_video (cached afterwards)
-                    v = torch.load(v_pt, map_location="cpu")
-                    if not isinstance(v, torch.Tensor) or v.ndim != 4 or v.shape[0] != 3:
+                    # ------------------------------------------------------------
+                    # [MODIFIED][PATCH] capture T_video safely
+                    #   - for .pt: old behavior (torch.load)
+                    #   - for .mp4: decode once (simple + correct)
+                    # ------------------------------------------------------------
+                    try:
+                        if v_path.suffix == ".pt":
+                            v = torch.load(v_path, map_location="cpu")
+                            if not isinstance(v, torch.Tensor) or v.ndim != 4 or v.shape[0] != 3:
+                                return False
+                            T_video = int(v.shape[1])
+                        elif v_path.suffix == ".mp4":
+                            v = _load_video_u8_cthw(v_path)
+                            T_video = int(v.shape[1])
+                        else:
+                            return False
+                    except Exception:
                         return False
-                    T_video = int(v.shape[1])
 
-                    loaded.append((clip_id, int(seg_idx), a96, a2048, v_pt, int(T_video)))
+                    loaded.append((clip_id, int(seg_idx), a96, a2048, v_path, int(T_video)))
 
                 loaded.sort(key=lambda x: (x[0], x[1]))
 
@@ -397,16 +457,20 @@ class SegmentDataset(Dataset):
                             raise FileNotFoundError(f"Missing audio_2048: {a2048}")
                         continue
 
-                    v_pt = self.video_root / clip_id / f"seg_{seg_idx:04d}" / f"seg_{seg_idx:04d}.pt"
-                    if not v_pt.exists():
+                    # ------------------------------------------------------------
+                    # [MODIFIED][PATCH] fine-tune video stored as .mp4 (not .pt)
+                    # ------------------------------------------------------------
+                    v_path = self.video_root / clip_id / f"seg_{seg_idx:04d}" / f"seg_{seg_idx:04d}.mp4"
+                    if not v_path.exists():
                         continue
 
-                    v = torch.load(v_pt, map_location="cpu")
-                    if not isinstance(v, torch.Tensor) or v.ndim != 4 or v.shape[0] != 3:
+                    try:
+                        v = _load_video_u8_cthw(v_path)
+                    except Exception:
                         continue
                     T_video = int(v.shape[1])
 
-                    self.index.append((clip_id, seg_idx, a96, a2048, v_pt, T_video))
+                    self.index.append((clip_id, seg_idx, a96, a2048, v_path, T_video))
 
             if self.max_segments is not None:
                 self.index = self.index[: self.max_segments]
@@ -426,9 +490,10 @@ class SegmentDataset(Dataset):
         mel_96 = torch.load(a96_pt, map_location=self.map_location).float()
         mel_2048 = torch.load(a2048_pt, map_location=self.map_location).float()
 
-        video = torch.load(v_pt, map_location="cpu")
-        if video.dtype != torch.uint8:
-            video = video.to(torch.uint8)
+        # ------------------------------------------------------------
+        # [MODIFIED][PATCH] decode .mp4 OR load .pt
+        # ------------------------------------------------------------
+        video = _load_video_u8_cthw(v_pt)
 
         y = self._labels_by_segment.get((clip_id, int(seg_idx)), None)
         if y is None and self.strict_labels and self._labels_by_segment:
