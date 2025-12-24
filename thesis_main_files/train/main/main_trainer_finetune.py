@@ -165,7 +165,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--grid-weight-decay-backbone", type=str, default="")
 
     # [ADDED] Optional resume checkpoint
-    parser.add_argument(
+    p.add_argument(
         "--ckpt-path",
         type=str,
         default="",
