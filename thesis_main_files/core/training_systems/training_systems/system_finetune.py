@@ -307,12 +307,12 @@ class AVFineTuneSystem(pl.LightningModule):
         return self._shared_step(batch, stage="val")
 
     def on_validation_start(self) -> None:
-        if self.freeze_backbone is True:
+        if self.freeze_backbone:
             self._freeze_backbones()
 
     def on_test_start(self) -> None:
-        if self.freeze_backbone is True:
+        if self.freeze_backbone:
             self._freeze_backbones()
     def on_train_start(self) -> None:
-        if self.freeze_backbone is True:
+        if self.freeze_backbone:
             self._freeze_backbones()
