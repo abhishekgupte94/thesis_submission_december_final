@@ -175,6 +175,7 @@ def parse_args() -> argparse.Namespace:
         help="Optional: path to a Lightning .ckpt to resume training from.",
     )
     p.add_argument("--csv-index", type=str, default="segment_index_finetune.csv")
+    p.add_argument("--strategy", type=str, default="ddp")
 
     return p.parse_args()
 
@@ -433,7 +434,7 @@ def main() -> None:
             system.mem_log_every = 1
         else:
             devices = local.devices
-            strategy = "ddp_find_unused_parameters_true"
+            strategy = args.strategy #"ddp_find_unused_parameters_true"
             max_epochs = local.max_epochs
             limit_train_batches = 1.0
             limit_val_batches = 1.0
