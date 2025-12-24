@@ -65,7 +65,7 @@ class AVFineTuneEvaluator(pl.LightningModule):
         #   Prefer model.cfg.vacl_s_out (often corresponds to X_*_att dim=K)
         #   Fallback to model.cfg.vacl_d_v / vacl_d_a if available
         # ============================================================
-        d_v, d_a = self._infer_stage2_head_dims(self.model)
+        d_v, d_a = 768,768
         self.stage2_head: Stage2AVClassifierHead = Stage2AVClassifierHead(d_v=d_v, d_a=d_a, cfg=self.stage2_cfg)
         self.stage2_head.eval()
 
