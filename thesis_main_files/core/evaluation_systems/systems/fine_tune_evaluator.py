@@ -84,8 +84,8 @@ class AVFineTuneEvaluator(pl.LightningModule):
         # Freeze everything by default (pure eval)
         for p in self.model.parameters():
             p.requires_grad = False
-        for p in self.stage2_head.parameters():
-            p.requires_grad = False
+        # for p in self.stage2_head.parameters():
+        #     p.requires_grad = False
 
         self.save_hyperparameters(ignore=["model"])
 
