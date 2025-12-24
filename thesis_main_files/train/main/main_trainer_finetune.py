@@ -105,7 +105,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--accumulate-grad-batches", type=int, default=1)
     p.add_argument("--mem-log-every", type=int, default=50)
     p.add_argument("--smoke-test", action="store_true")
-    p.add_argument("--ckpt", type=str, required=True, help="Path to .ckpt produced by Stage-2 trainer")
 
     # precision (A100: bf16-mixed recommended)
     p.add_argument(
@@ -164,7 +163,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--grid-weight-decay-head", type=str, default="")
     p.add_argument("--grid-lr-backbone", type=str, default="")
     p.add_argument("--grid-weight-decay-backbone", type=str, default="")
-    p.add_argument("--ckpt", type=str, required=True, help="Path to .ckpt produced by Stage-2 trainer")
 
     # [ADDED] Optional resume checkpoint
     parser.add_argument(
@@ -440,7 +438,7 @@ def main() -> None:
         )
 
         # [ADDED] Lightning-style resume
-        ckpt_path = args.ckpt_path.strip() if hasattr(args, "ckpt") else ""
+        ckpt_path = args.ckpt_path.strip() if hasattr(args, "--ckpt-path") else ""
         ckpt_path = Path(ckpt_path) if ckpt_path else None
 
         print(f"[main_trainer_finetune] ckpt_path = {ckpt_path or 'NONE'}")
