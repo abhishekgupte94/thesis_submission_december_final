@@ -4,7 +4,8 @@
 #
 # Purpose:
 #   - Load pretrained LAV-DF (batfd / batfd_plus)
-#   - Accept audio/video tensors from dataloader
+#   - Accept audio/video *paths OR tensors* from dataloader
+#   - Ensure correct device + dtype
 #   - Run forward inference
 #   - ALWAYS return:
 #       * prob_fake : Tensor[B]
@@ -19,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Literal, Optional, Tuple
+from typing import Any, Dict, Literal, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -29,6 +30,42 @@ import torch.nn as nn
 # ============================================================
 
 ModelType = Literal["batfd", "batfd_plus"]
+def _ensure_lavdf_import_on_syspath() -> None:
+    """
+    Adds:
+      <repo_root>/external/LAV-DF
+      <repo_root>/external/LAV-DF/model
+      <repo_root>/external/LAV-DF/dataset
+    """
+    import sys
+
+    anchor = Path(__file__).resolve()
+    repo_root = None
+    for p in [anchor, *anchor.parents]:
+        if p.name == "thesis_main_files":
+            repo_root = p
+            break
+    if repo_root is None:
+        repo_root = Path.cwd().resolve()
+
+    base = repo_root / "external" / "LAV-DF"
+
+    def _add(pp: Path) -> None:
+        if pp.is_dir():
+            s = str(pp.resolve())
+            if s not in sys.path:
+                sys.path.insert(0, s)
+
+    if not (base.is_dir() and (base / "model").is_dir()):
+        raise ImportError(
+            "Could not locate LAV-DF under thesis_main_files/external/LAV-DF. "
+            "Expected external/LAV-DF/model to exist."
+        )
+
+    _add(base)
+    _add(base / "model")
+    _add(base / "dataset")
+
 
 
 @dataclass
@@ -51,16 +88,16 @@ class LAVDFInferArchitecture(nn.Module):
     ):
         super().__init__()
         self.cfg = cfg
-
+        _ensure_lavdf_import_on_syspath()
         # ------------------------------------------------------------
         # Load underlying LAV-DF network
         # ------------------------------------------------------------
         if cfg.model_type == "batfd_plus":
-            from core.external.lavdf.models.batfd_plus import BATFDPlus
-            self.net = BATFDPlus()
+            from batfd_plus import BatfdPlus
+            self.net = BatfdPlus()
         elif cfg.model_type == "batfd":
-            from core.external.lavdf.models.batfd import BATFD
-            self.net = BATFD()
+            from batfd import Batfd
+            self.net = Batfd()
         else:
             raise ValueError(f"Unknown model_type={cfg.model_type}")
 
@@ -71,6 +108,22 @@ class LAVDFInferArchitecture(nn.Module):
         self.net.eval()
         for p in self.net.parameters():
             p.requires_grad = False
+
+    # ============================================================
+    # [RESTORED] Path handling (DO NOT REMOVE)
+    # ============================================================
+
+    def _ensure_path(self, x: Union[str, Path, torch.Tensor]) -> torch.Tensor:
+        """
+        Accepts:
+          - torch.Tensor → returned as-is
+          - str / Path   → torch.load(...)
+        """
+        if torch.is_tensor(x):
+            return x
+        if isinstance(x, (str, Path)):
+            return torch.load(x, map_location="cpu")
+        raise TypeError(f"Unsupported input type: {type(x)}")
 
     # ============================================================
     # Robust output parsing helpers
@@ -195,12 +248,13 @@ class LAVDFInferArchitecture(nn.Module):
 
     def forward(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
         """
-        Expects batch to already contain loaded tensors
-        (video, audio) via AVPathsDataModule.
+        Expects batch to contain:
+          - video : Tensor OR path
+          - audio : Tensor OR path
         """
 
-        video_b = batch["video"]
-        audio_b = batch["audio"]
+        video_b = self._ensure_path(batch["video"])
+        audio_b = self._ensure_path(batch["audio"])
 
         # ------------------------------------------------------------
         # LAV-DF forward
