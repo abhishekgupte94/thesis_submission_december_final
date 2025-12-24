@@ -115,7 +115,7 @@ def main() -> None:
     #   <evaluation_root>/<batch_name>/{audio, video_face_crops, segment_paths_finetune.csv, ...}
     # ============================================================
     dm_cfg = SegmentDataModuleFineTuneConfig(
-        offline_root=evaluation_root,  # <- keep cfg field name; you're using eval root
+        offline_root=Path(evaluation_root),  # <- keep cfg field name; you're using eval root
         batch_name=args.batch_name,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
