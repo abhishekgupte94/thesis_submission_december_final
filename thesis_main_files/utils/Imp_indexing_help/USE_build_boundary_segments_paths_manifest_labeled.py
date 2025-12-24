@@ -126,7 +126,7 @@ def main() -> None:
     ap.add_argument("--batch-name", type=str, required=True)
     ap.add_argument("--audio-dirname", type=str, default="audio")
     ap.add_argument("--video-dirname", type=str, default="video_face_crops")
-    ap.add_argument("--out-csv", type=str, default="segment_index_finetune.csv")
+    ap.add_argument("--out-csv", type=str, default="segment_index_finetune_lavdf.csv")
     ap.add_argument("--strict", action="store_true", default=False)
 
     ap.add_argument("--labels-csv", type=str, default=None)
