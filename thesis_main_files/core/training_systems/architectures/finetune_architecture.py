@@ -162,6 +162,22 @@ class FinetuneArchitecture(nn.Module):
             compute_infonce = self.cfg.compute_infonce
         if return_intermediates is None:
             return_intermediates = self.cfg.return_intermediates
+        # ============================================================
+        # [ADDED][PATCH] Video dtype fix for bf16-mixed:
+        #   dataloader returns uint8 frames (0..255) for mp4 decode.
+        #   Swin3D expects floating input. Cast + normalize here.
+        #   Keep device placement to Lightning (no .to(device) calls).
+        # ============================================================
+        if video_in.dtype == torch.uint8:
+            video_in = video_in.float().div_(255.0)
+        elif not torch.is_floating_point(video_in):
+            video_in = video_in.float()
+
+        # Optional (only if your Swin3D was trained with ImageNet stats):
+        # mean/std for RGB (channels-first)
+        # mean = torch.tensor([0.485, 0.456, 0.406], device=video_in.device).view(1, 3, 1, 1, 1)
+        # std  = torch.tensor([0.229, 0.224, 0.225], device=video_in.device).view(1, 3, 1, 1, 1)
+        # video_in = (video_in - mean) / std
 
         # ============================================================
         # [KEPT] Backbone forward
