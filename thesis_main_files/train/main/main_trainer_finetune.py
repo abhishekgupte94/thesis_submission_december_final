@@ -364,7 +364,7 @@ def main() -> None:
             return t[:n].tolist()
 
         # pick a backbone weight that MUST exist in stage-1
-        w = model.video_backbone.patch_embed.proj.weight
+        w = model.common_proj.proj_heads.weight
         print("[CKPT TEST] BEFORE:", _sig(w))
 
         ckpt = torch.load(args.ckpt_path, map_location="cpu")
