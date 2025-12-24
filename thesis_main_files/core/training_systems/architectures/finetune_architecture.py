@@ -77,7 +77,7 @@ class FinetuneArchitecture(nn.Module):
         video_backbone: nn.Module,
         audio_backbone: nn.Module,
         cfg: Optional[FinetuneArchitectureConfig] = None,
-        c_v_in: int = 256,
+        c_v_in: int = 768,
         c_a_in: int = 768,
     ) -> None:
         super().__init__()
