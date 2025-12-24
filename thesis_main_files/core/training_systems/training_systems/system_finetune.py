@@ -271,7 +271,7 @@ class AVFineTuneSystem(pl.LightningModule):
         logits = self.stage2_head(X_v_att=X_v_att, X_a_att=X_a_att)  # (B,1)
 
         # Labels
-        y = batch.get("label", None)
+        y = batch.get("y", None)
         if y is None:
             # Allow pure forward/profiling without labels
             loss_cls = torch.zeros((), device=logits.device, dtype=logits.dtype)
