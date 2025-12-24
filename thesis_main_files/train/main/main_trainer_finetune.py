@@ -442,7 +442,44 @@ def main() -> None:
 
         print(f"[main_trainer_finetune] ckpt_path = {ckpt_path or 'NONE'}")
 
-        trainer.fit(system, datamodule=dm, ckpt_path=ckpt_path)
+        # ---- Lightning System (already in your code) ----
+        system = AVFineTuneSystem(
+            model=model,
+            lr=local.lr,
+            weight_decay=local.weight_decay,
+            omega=local.omega,
+            lambda_cpe=local.lambda_,
+            alpha=local.alpha,
+            beta=local.beta,
+            stage2_pool=local.stage2_pool,
+            stage2_use_layernorm=local.stage2_use_layernorm,
+            stage2_mlp_hidden=local.stage2_mlp_hidden,
+            stage2_dropout=local.stage2_dropout,
+            lr_head=local.lr_head,
+            weight_decay_head=local.weight_decay_head,
+            lr_backbone=local.lr_backbone,
+            weight_decay_backbone=local.weight_decay_backbone,
+            enable_energy_tracking=local.enable_energy_tracking,
+            enable_flops_profile=local.enable_flops_profile,
+        )
+
+        # ============================================================
+        # 🔑 LOAD STAGE-1 CHECKPOINT HERE (TRANSFER, NOT RESUME)
+        # ============================================================
+        if args.ckpt_path:
+            ckpt = torch.load(args.ckpt_path, map_location="cpu")
+
+            missing, unexpected = system.load_state_dict(
+                ckpt["state_dict"],
+                strict=False,  # REQUIRED
+            )
+
+            if system.trainer is None or system.trainer.is_global_zero:
+                print("[Stage-2 init] loaded Stage-1 weights")
+                print("[Stage-2 init] missing keys:", missing)
+                print("[Stage-2 init] unexpected keys:", unexpected)
+
+        trainer.fit(system, datamodule=dm)
 
     # ============================================================
     # Grid-search loop (optional)
