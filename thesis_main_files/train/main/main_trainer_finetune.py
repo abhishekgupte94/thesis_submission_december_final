@@ -280,9 +280,15 @@ def main() -> None:
         batch_name=args.batch_name,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
+
         # pin_memory=True,
         # persistent_workers=True,
-        val_split=args.val_split,)
+        val_split=args.val_split,
+        segments_csv=str(
+         Path(offline_root)
+         / args.batch_name
+         / "segment_paths_finetune.csv"
+                ))
     dm = SegmentDataModuleFineTune(
             cfg= cfg_dl
     )
