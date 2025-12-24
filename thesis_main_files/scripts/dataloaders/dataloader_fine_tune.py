@@ -477,7 +477,7 @@ class SegmentDataset(Dataset):
             "audio": mel_96,  # BACKCOMPAT
             "audio_96": mel_96,
             "audio_2048": mel_2048,
-            "video": video,
+            "video_u8_cthw": video,
             "T_video": int(T_video),
             "y": y,
         }
@@ -513,7 +513,7 @@ def collate_segments_pad(items: List[Dict[str, object]]) -> Dict[str, object]:
         "seg_idxs": seg_idxs,
         "audio_96": aud96,
         "audio_2048": aud2048,
-        "video": videos,
+        "video_u8_cthw": videos,
         "y": y_tensor,
         "y_onehot": y_onehot,
     }

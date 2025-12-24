@@ -208,12 +208,12 @@ class AVFineTuneSystem(pl.LightningModule):
     # ============================================================
     def forward(self, batch: Dict[str, Any]) -> Dict[str, Any]:
         # Expect dataloader to provide:
-        #   batch["video"] : tensor
+        #   batch["video_u8_cthw"] : tensor
         #   batch["audio"] : tensor
         # Optional:
         #   batch["label"] : (B,) 0/1 or float
         return self.model(
-            video_in=batch["video"],
+            video_in=batch["video_u8_cthw"],
             audio_in=batch["audio"],
         )
 
