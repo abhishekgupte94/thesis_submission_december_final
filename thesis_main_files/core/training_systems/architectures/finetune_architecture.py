@@ -205,8 +205,8 @@ class FinetuneArchitecture(nn.Module):
             return_intermediates=return_intermediates,
         )
         cpe_out = self.common_proj(
-            X_v=X_v,
-            X_a=X_a,
+            face_in=X_v,
+            audio_in=X_a,
             # compute_infonce=compute_infonce,
             return_intermediates=return_intermediates,
         )
