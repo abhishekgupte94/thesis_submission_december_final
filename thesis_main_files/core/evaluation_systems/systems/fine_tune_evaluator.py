@@ -33,8 +33,8 @@ from core.training_systems.architectures.final_classifier_module import (
 class EvalConfig:
     pool: str = "mean"
     use_layernorm: bool = False
-    mlp_hidden: Optional[int] = None
-    dropout: float = 0.0
+    mlp_hidden: Optional[int] = 128
+    dropout: float = 0.1
 
     # Set True if you want BCE loss too (requires labels present in batch)
     compute_loss: bool = True

@@ -172,8 +172,8 @@ def main() -> None:
     eval_cfg = EvalConfig(
         pool=args.stage2_pool,
         use_layernorm=bool(args.stage2_use_layernorm),
-        mlp_hidden=None if int(args.stage2_mlp_hidden) < 0 else int(args.stage2_mlp_hidden),
-        dropout=float(args.stage2_dropout),
+        mlp_hidden=128,
+        dropout=0.1,
         compute_loss=True,
         save_preds_path=(args.save_preds_path or None),
     )
