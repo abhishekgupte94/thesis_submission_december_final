@@ -104,7 +104,8 @@ def _lavdf_official_preprocess_from_mp4(
       audio: (64,2048)
     """
     # [IMPORTANT] Use YOUR attached dataset script + official utils
-    from core.boundary_localisation.main.lavdf import Lavdf  # type: ignore
+    _ensure_lavdf_import_on_syspath()
+    from dataset.model import Lavdf  # type: ignore
     from utils import read_video, padding_video, padding_audio, resize_video  # type: ignore
     from einops import rearrange  # type: ignore
 
