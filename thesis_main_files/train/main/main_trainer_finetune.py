@@ -341,7 +341,19 @@ def main() -> None:
             c_v_in=768,
             c_a_in=768,
         )
+        if args.ckpt_path:
+            ckpt = torch.load(args.ckpt_path, map_location="cpu")
+            sd = ckpt["state_dict"]
 
+            # strip Lightning prefix
+            sd = {k.replace("model.", ""): v for k, v in sd.items()}
+
+            missing, unexpected = model.load_state_dict(sd, strict=False)
+
+            print("[CKPT LOAD]")
+            print("  missing:", len(missing))
+            print("  unexpected:", len(unexpected))
+            print("  sample missing:", missing[:10])
 
         # ---- Lightning System (mirror Stage-1 wiring) ----
         system = AVFineTuneSystem(
@@ -426,10 +438,7 @@ def main() -> None:
             every_n_epochs=1,
             filename="epoch={epoch}-step={step}",
         )
-        # load stage-1 weights
-        if args.ckpt_path:
-            ckpt = torch.load(args.ckpt_path, map_location="cpu")
-            system.load_state_dict(ckpt["state_dict"], strict=False)
+
 
         trainer = pl.Trainer(
             accelerator="gpu",
