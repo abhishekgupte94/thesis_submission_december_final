@@ -396,7 +396,7 @@ def main() -> None:
             system.mem_log_every = 1
         else:
             devices = local.devices
-            strategy = "ddp"
+            strategy = "ddp_find_unused_parameters_true"
             max_epochs = local.max_epochs
             limit_train_batches = 1.0
             limit_val_batches = 1.0
