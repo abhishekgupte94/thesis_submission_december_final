@@ -153,8 +153,8 @@ def main() -> None:
         c_v_in=768,
         c_a_in=768,
     )
-    if args.ckpt_path:
-        ckpt = torch.load(args.ckpt_path, map_location="cpu")
+    if args.ckpt:
+        ckpt = torch.load(args.ckpt, map_location="cpu")
         sd = ckpt["state_dict"]
 
         # strip Lightning prefix
