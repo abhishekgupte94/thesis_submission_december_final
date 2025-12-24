@@ -164,6 +164,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--grid-lr-backbone", type=str, default="")
     p.add_argument("--grid-weight-decay-backbone", type=str, default="")
 
+    # [ADDED] Optional resume checkpoint
+    parser.add_argument(
+        "--ckpt-path",
+        type=str,
+        default="",
+        help="Optional: path to a Lightning .ckpt to resume training from.",
+    )
+
     return p.parse_args()
 
 
@@ -429,7 +437,13 @@ def main() -> None:
             num_sanity_val_steps=num_sanity_val_steps,
         )
 
-        trainer.fit(system, datamodule=dm)
+        # [ADDED] Lightning-style resume
+        ckpt_path = args.ckpt_path.strip() if hasattr(args, "ckpt_path") else ""
+        ckpt_path = ckpt_path if ckpt_path else None
+
+        print(f"[main_trainer_finetune] ckpt_path = {ckpt_path or 'NONE'}")
+
+        trainer.fit(system, datamodule=dm, ckpt_path=ckpt_path)
 
     # ============================================================
     # Grid-search loop (optional)

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Any, Dict, Optional
 
 import lightning as pl
 import torch
@@ -33,7 +32,7 @@ from core.training_systems.architectures.finetune_architecture import (
     FinetuneArchitectureConfig,
 )
 
-from core.training_systems.training_systems.system_fine_eval import (
+from evaluation_systems.systems.fine_tune_evaluator import (
     AVFineTuneEvaluator,
     EvalConfig,
 )

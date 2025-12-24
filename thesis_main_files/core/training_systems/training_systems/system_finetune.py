@@ -161,7 +161,7 @@ class AVFineTuneSystem(pl.LightningModule):
         # ============================================================
         # [ADDED] Freeze audio + video backbones for Stage-2 finetune
         # ============================================================
-        self._freeze_backbones()
+
     # ============================================================
     # [ADDED] Backbone freezing (Stage-2 policy)
     # ============================================================
@@ -305,4 +305,12 @@ class AVFineTuneSystem(pl.LightningModule):
     def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> Dict[str, Any]:
         return self._shared_step(batch, stage="val")
 
+    def on_validation_start(self) -> None:
+        self._freeze_backbones()
+
+    def on_test_start(self) -> None:
+        self._freeze_backbones()
+
+    def on_train_start(self) -> None:
+        self._freeze_backbones()
 
