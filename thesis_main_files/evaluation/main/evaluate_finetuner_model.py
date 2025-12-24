@@ -120,10 +120,15 @@ def main() -> None:
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         val_split=args.val_split,
+        segments_csv=str(
+            Path(evaluation_root)
+            / args.batch_name
+            / args.csv_index
+        ))
         # if your config supports them, they should remain enabled for speed:
         # pin_memory=True,
         # persistent_workers=(args.num_workers > 0),
-    )
+
     dm = SegmentDataModuleFineTune(cfg=dm_cfg)
 
     # ============================================================
