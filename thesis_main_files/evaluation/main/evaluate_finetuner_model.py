@@ -32,7 +32,7 @@ from core.training_systems.architectures.finetune_architecture import (
     FinetuneArchitectureConfig,
 )
 
-from evaluation_systems.systems.fine_tune_evaluator import (
+from core.evaluation_systems.systems.fine_tune_evaluator import (
     AVFineTuneEvaluator,
     EvalConfig,
 )
