@@ -441,7 +441,7 @@ def main() -> None:
 
         # [ADDED] Lightning-style resume
         ckpt_path = args.ckpt_path.strip() if hasattr(args, "ckpt") else ""
-        ckpt_path = ckpt_path if ckpt_path else None
+        ckpt_path = Path(ckpt_path) if ckpt_path else None
 
         print(f"[main_trainer_finetune] ckpt_path = {ckpt_path or 'NONE'}")
 
