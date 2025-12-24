@@ -109,7 +109,7 @@ def _load_labels_csv(csv_path: Path, *, strict: bool = True) -> Dict[Tuple[str, 
                     if strict:
                         raise ValueError(f"Bad row (missing fields): {row}")
                     continue
-                stem = filename[:-4] if filename.lower().endswith((".mp4", ".wav")) else filename
+                stem = filename[:-4] if filename.lower().endswith((".mp4", ".pt")) else filename
                 clip_id = stem
                 seg_idx = 0
                 y = int(label_str)
@@ -336,14 +336,14 @@ class AVPathsDataset(Dataset):
                         stem = filename
                         if stem.lower().endswith(".mp4"):
                             stem = stem[:-4]
-                        if stem.lower().endswith(".wav"):
+                        if stem.lower().endswith(".pt"):
                             stem = stem[:-4]
 
                         clip_id = stem
                         seg_idx = 0
 
                         vpath = (self.video_root / f"{stem}.mp4").resolve()
-                        apath = (self.audio_root / f"{stem}.wav").resolve()
+                        apath = (self.audio_root / f"{stem}.pt").resolve()
 
                         y = None
                         if label_str:
@@ -375,7 +375,7 @@ class AVPathsDataset(Dataset):
     # -------------------------
     def _discover_from_disk(self) -> None:
         videos = list(self.video_root.rglob("*.mp4"))
-        audios = list(self.audio_root.rglob("*.wav"))
+        audios = list(self.audio_root.rglob("*.pt"))
 
         # Build audio map by key
         audio_map: Dict[Tuple[str, int], Path] = {}
