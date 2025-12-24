@@ -229,7 +229,7 @@ class AVPathsDataset(Dataset):
 
                 video_rel = row.get("video_rel")
                 audio_rel = row.get("audio_rel")
-                if not isinstance(video_rel, str) or not isinstance(audio_rel, str):
+                if not isinstance(video_rel, str):
                     return False
 
                 video_path = (self.batch_dir / video_rel).resolve()
@@ -313,7 +313,7 @@ class AVPathsDataset(Dataset):
                         audio_rel = (row.get("audio_rel") or "").strip()
                         label_str = (row.get("label") or "").strip() if "label" in fields else ""
 
-                        if not clip_id or not seg_idx_str or not video_rel or not audio_rel:
+                        if not clip_id or not seg_idx_str or not video_rel:
                             return False
                         seg_idx = int(seg_idx_str)
 
