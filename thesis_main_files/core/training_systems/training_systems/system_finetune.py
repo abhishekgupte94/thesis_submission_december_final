@@ -59,7 +59,7 @@ class AVFineTuneSystemConfig:
     # Optional profiling toggles
     enable_energy_tracking: bool = False
     enable_flops_profile: bool = False
-
+    freeze_backbone: Optional[bool] = True
 
 class AVFineTuneSystem(pl.LightningModule):
     def __init__(
@@ -85,6 +85,7 @@ class AVFineTuneSystem(pl.LightningModule):
         val_metric_cap_batches: int = 0,
         enable_energy_tracking: bool = False,
         enable_flops_profile: bool = False,
+        freeze_backbone: Optional[bool] = True
     ) -> None:
         super().__init__()
 
@@ -161,7 +162,7 @@ class AVFineTuneSystem(pl.LightningModule):
         # ============================================================
         # [ADDED] Freeze audio + video backbones for Stage-2 finetune
         # ============================================================
-
+        self.freeze_backbone = freeze_backbone
     # ============================================================
     # [ADDED] Backbone freezing (Stage-2 policy)
     # ============================================================
@@ -306,11 +307,12 @@ class AVFineTuneSystem(pl.LightningModule):
         return self._shared_step(batch, stage="val")
 
     def on_validation_start(self) -> None:
-        self._freeze_backbones()
+        if self.freeze_backbone is True:
+            self._freeze_backbones()
 
     def on_test_start(self) -> None:
-        self._freeze_backbones()
-
+        if self.freeze_backbone is True:
+            self._freeze_backbones()
     def on_train_start(self) -> None:
-        self._freeze_backbones()
-
+        if self.freeze_backbone is True:
+            self._freeze_backbones()

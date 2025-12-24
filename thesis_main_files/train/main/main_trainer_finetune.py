@@ -163,7 +163,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--grid-weight-decay-head", type=str, default="")
     p.add_argument("--grid-lr-backbone", type=str, default="")
     p.add_argument("--grid-weight-decay-backbone", type=str, default="")
-
+    p.add_argument("--freeze-backbone", type=bool, default=True)
     # [ADDED] Optional resume checkpoint
     p.add_argument(
         "--ckpt-path",
@@ -376,6 +376,7 @@ def main() -> None:
             weight_decay_backbone=getattr(local, 'weight_decay_backbone', None),
             enable_energy_tracking=bool(local.enable_energy_tracking),
             enable_flops_profile=bool(local.enable_flops_profile),
+            freeze_backbone=args.freeze_backbone
         )
 
         # [MIRRORED] runtime knobs
