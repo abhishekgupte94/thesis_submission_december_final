@@ -287,7 +287,7 @@ def main() -> None:
         segments_csv=str(
          Path(offline_root)
          / args.batch_name
-         / "segment_paths_finetune.csv"
+         / "segment_index_finetune.csv"
                 ))
     dm = SegmentDataModuleFineTune(
             cfg= cfg_dl
