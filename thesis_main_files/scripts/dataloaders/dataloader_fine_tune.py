@@ -1,30 +1,15 @@
-# dataloader_fine_tune.py
+# scripts/dataloaders/dataloader_fine_tune.py
 # ============================================================
 # [FINAL | STAGE-2 FINE-TUNE DATALOADER]
-#
-# Agreed design:
-#   - Mirror dataloader.py philosophy for filesystem discovery/indexing:
-#       * Discover segments from: <offline_root>/<batch_name>/audio/<clip_id>/*.pt
-#       * Validate paired files exist:
-#           - audio_96:   <clip_id>_<seg_idx>.pt
-#           - audio_2048: <clip_id>_<seg_idx>__2048.pt
-#           - video:      <video_face_crops>/<clip_id>/seg_<seg_idx>/seg_<seg_idx>.mp4  (FINE-TUNE)
-#       * Cache index metadata (paths + T_video) to speed up repeat runs
-#   - Remove bucketed batching (standard DataLoader + padding collate)
-#   - Keep fine-tune uniqueness: label dictionary (segment-level) loaded from a
-#     CSV with columns:
-#         clip_id (string), seg_idx (int), label (int 0/1)
-#
-# Returned batch keys:
-#   - audio_96, audio_2048, video_u8_cthw, T_video, y (+ y_onehot in collate)
 #
 # ============================================================
 # [PATCH NOTES | 2025-12-24]
 # [MODIFIED] Support video stored as .mp4 (no video tensors available).
-# [MODIFIED] IMPORTANT PERFORMANCE FIX:
-#   - During indexing, DO NOT decode mp4 for every row.
-#   - Use ffprobe to obtain T_video; decode only as fallback if ffprobe fails.
-#   - __getitem__ still decodes mp4 normally to return frames.
+# [MODIFIED] CRITICAL PERFORMANCE FIX:
+#   - During indexing (CSV + filesystem fallback), DO NOT ffprobe/decode mp4.
+#   - Store T_video = -1 for mp4 and compute true T_video in __getitem__
+#     after decoding (since decode happens anyway).
+#   - Padding remains unchanged (collate uses per-item T_video).
 # ============================================================
 
 from __future__ import annotations
@@ -43,13 +28,11 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 # ============================================================
-# [ADDED][PATCH] Reuse fast ffprobe + mp4 decode helpers from base loader
-# (exactly like your other dataloader)
+# [MODIFIED][PATCH] Reuse mp4 decode helper from base loader
+# (ffprobe import removed because we no longer probe during indexing)
 # ============================================================
-from scripts.dataloaders.dataloader import (  # noqa: WPS433
-    _probe_num_frames_mp4_ffprobe,
-    _read_mp4_to_u8_cthw,
-)
+from scripts.dataloaders.dataloader import _read_mp4_to_u8_cthw  # noqa: WPS433
+
 
 # ============================================================
 # [KEPT] Regex for BASE audio segment files (64x96 only)
@@ -112,7 +95,6 @@ def _load_video_u8_cthw(video_path: Path) -> torch.Tensor:
         return v.to(torch.uint8) if v.dtype != torch.uint8 else v
 
     if video_path.suffix == ".mp4":
-        # [MODIFIED][PATCH] Use imported base helper (no local import)
         v = _read_mp4_to_u8_cthw(video_path)
         if not isinstance(v, torch.Tensor) or v.ndim != 4 or v.shape[0] != 3:
             raise ValueError(f"Bad decoded mp4 tensor shape from: {video_path}")
@@ -125,6 +107,9 @@ def _load_video_u8_cthw(video_path: Path) -> torch.Tensor:
 # [KEPT] Labels file loader (segment-level)
 #   CSV columns expected:
 #       clip_id, seg_idx, label
+#
+# NOTE:
+#   - Works even if CSV has extra columns (we ignore them).
 # ============================================================
 def _load_segment_labels_csv(csv_path: Path, *, strict: bool = True) -> Dict[Tuple[str, int], int]:
     labels: Dict[Tuple[str, int], int] = {}
@@ -164,7 +149,14 @@ def _load_segment_labels_csv(csv_path: Path, *, strict: bool = True) -> Dict[Tup
 # Segment Dataset (Stage-2 fine-tune)
 # ============================================================
 class SegmentDataset(Dataset):
-    """Loads (audio_96, audio_2048, video_u8_cthw) per segment."""
+    """Loads (audio_96, audio_2048, video_u8_cthw) per segment.
+
+    Indexing:
+      - CSV fast-path if provided/present
+      - Else filesystem discovery from audio_root
+    Labels:
+      - Loaded from segments_csv (segment-level)
+    """
 
     def __init__(
         self,
@@ -189,12 +181,17 @@ class SegmentDataset(Dataset):
         self.audio_root = self.batch_dir / "audio"
         self.video_root = self.batch_dir / "video_face_crops"
 
-        self._segments_csv_path: Optional[Path] = None
+        # ------------------------------------------------------------
+        # [KEPT] segments CSV path (explicit if passed, else default)
+        # ------------------------------------------------------------
         if segments_csv is not None:
-            self._segments_csv_path = Path(segments_csv)
+            self._segments_csv_path: Optional[Path] = Path(segments_csv)
         else:
             self._segments_csv_path = self.batch_dir / "segment_index_finetune.csv"
 
+        # ------------------------------------------------------------
+        # [KEPT] Segment-level label dictionary (fine-tune unique)
+        # ------------------------------------------------------------
         self.strict_labels = bool(strict_labels)
         self._labels_by_segment: Dict[Tuple[str, int], int] = {}
         if self._segments_csv_path is not None:
@@ -206,6 +203,9 @@ class SegmentDataset(Dataset):
 
         # Index tuple:
         #   (clip_id, seg_idx, audio96_path, audio2048_path, video_path, T_video)
+        # NOTE:
+        #   - For mp4-backed video, T_video is set to -1 during indexing and
+        #     computed in __getitem__ after decode.
         self.index: List[Tuple[str, int, Path, Path, Path, int]] = []
         self._build_index()
 
@@ -214,6 +214,9 @@ class SegmentDataset(Dataset):
     #
     # Expected CSV header:
     #   clip_id,seg_idx,audio96_rel,audio2048_rel,video_rel,label
+    #
+    # IMPORTANT:
+    #   - We do NOT probe/decode mp4 in indexing anymore (performance).
     # ============================================================
     def _try_load_segment_index_csv(self, csv_path: Path) -> bool:
         try:
@@ -231,8 +234,8 @@ class SegmentDataset(Dataset):
 
                     clip_id = (row.get("clip_id") or "").strip()
                     seg_idx_str = (row.get("seg_idx") or "").strip()
-
                     label_str = (row.get("label") or "").strip()
+
                     if not clip_id or not seg_idx_str or not label_str:
                         return False
                     try:
@@ -257,9 +260,10 @@ class SegmentDataset(Dataset):
                         return False
 
                     # ------------------------------------------------------------
-                    # [MODIFIED][PATCH] capture T_video like the other dataloader:
-                    #   - .pt: torch.load to get T
-                    #   - .mp4: ffprobe to get T, decode fallback only if probe fails
+                    # [MODIFIED][PATCH] T_video handling:
+                    #   - .pt: load once to get T (fast)
+                    #   - .mp4: DO NOT ffprobe/decode during indexing (too slow on large CSV)
+                    #           defer T_video to __getitem__ (decode happens there anyway)
                     # ------------------------------------------------------------
                     try:
                         if v_path.suffix == ".pt":
@@ -267,17 +271,8 @@ class SegmentDataset(Dataset):
                             if not isinstance(v, torch.Tensor) or v.ndim != 4 or v.shape[0] != 3:
                                 return False
                             T_video = int(v.shape[1])
-
                         elif v_path.suffix == ".mp4":
-                            T_video_probe = _probe_num_frames_mp4_ffprobe(v_path)
-                            if T_video_probe is None:
-                                # fallback: decode once (slow but safe)
-                                v_u8 = _read_mp4_to_u8_cthw(v_path)
-                                if not isinstance(v_u8, torch.Tensor) or v_u8.ndim != 4 or v_u8.shape[0] != 3:
-                                    return False
-                                T_video_probe = int(v_u8.shape[1])
-                            T_video = int(T_video_probe)
-
+                            T_video = -1
                         else:
                             return False
                     except Exception:
@@ -328,12 +323,12 @@ class SegmentDataset(Dataset):
 
                 a96 = (self.batch_dir / a96_rel).resolve()
                 a2048 = (self.batch_dir / a2048_rel).resolve()
-                v_pt = (self.batch_dir / v_rel).resolve()
+                v_path = (self.batch_dir / v_rel).resolve()
 
-                if not a96.exists() or not a2048.exists() or not v_pt.exists():
+                if not a96.exists() or not a2048.exists() or not v_path.exists():
                     return False
 
-                loaded.append((clip_id, seg_idx, a96, a2048, v_pt, T_video))
+                loaded.append((clip_id, seg_idx, a96, a2048, v_path, T_video))
 
             if self.max_segments is not None:
                 loaded = loaded[: self.max_segments]
@@ -346,7 +341,7 @@ class SegmentDataset(Dataset):
     def _save_index_cache(self, cache_path: Path) -> None:
         try:
             payload = []
-            for (clip_id, seg_idx, a96, a2048, v_pt, T_video) in self.index:
+            for (clip_id, seg_idx, a96, a2048, v_path, T_video) in self.index:
                 payload.append(
                     {
                         "clip_id": clip_id,
@@ -354,7 +349,7 @@ class SegmentDataset(Dataset):
                         "T_video": int(T_video),
                         "a96_rel": str(a96.relative_to(self.batch_dir)),
                         "a2048_rel": str(a2048.relative_to(self.batch_dir)),
-                        "v_rel": str(v_pt.relative_to(self.batch_dir)),
+                        "v_rel": str(v_path.relative_to(self.batch_dir)),
                     }
                 )
             cache_path.write_text(json.dumps(payload))
@@ -398,7 +393,9 @@ class SegmentDataset(Dataset):
                 if self._try_load_index_cache(cache_path):
                     return
 
-            # CSV fast-path helper
+            # ============================================================
+            # [KEPT] CSV fast-path helper
+            # ============================================================
             if self._segments_csv_path is not None and self._segments_csv_path.exists():
                 if self._try_load_segment_index_csv(self._segments_csv_path):
                     self._save_index_cache(cache_path)
@@ -435,20 +432,9 @@ class SegmentDataset(Dataset):
                         continue
 
                     # ------------------------------------------------------------
-                    # [MODIFIED][PATCH] Probe T_video without decoding (ffprobe),
-                    # fallback decode only if needed
+                    # [MODIFIED][PATCH] No bucketing => don't probe/decode here
                     # ------------------------------------------------------------
-                    T_video_probe = _probe_num_frames_mp4_ffprobe(v_path)
-                    if T_video_probe is None:
-                        try:
-                            v_u8 = _read_mp4_to_u8_cthw(v_path)
-                            if not isinstance(v_u8, torch.Tensor) or v_u8.ndim != 4 or v_u8.shape[0] != 3:
-                                continue
-                            T_video_probe = int(v_u8.shape[1])
-                        except Exception:
-                            continue
-
-                    T_video = int(T_video_probe)
+                    T_video = -1
 
                     self.index.append((clip_id, seg_idx, a96, a2048, v_path, T_video))
 
@@ -465,7 +451,7 @@ class SegmentDataset(Dataset):
         return len(self.index)
 
     def __getitem__(self, i: int) -> Dict[str, object]:
-        clip_id, seg_idx, a96_pt, a2048_pt, v_pt, T_video = self.index[i]
+        clip_id, seg_idx, a96_pt, a2048_pt, v_pt, T_video_cached = self.index[i]
 
         mel_96 = torch.load(a96_pt, map_location=self.map_location).float()
         mel_2048 = torch.load(a2048_pt, map_location=self.map_location).float()
@@ -474,6 +460,12 @@ class SegmentDataset(Dataset):
         # [KEPT] decode .mp4 OR load .pt for the actual frames
         # ------------------------------------------------------------
         video = _load_video_u8_cthw(v_pt)
+
+        # ------------------------------------------------------------
+        # [ADDED][PATCH] Derive true T_video from decoded/loaded tensor
+        # (fixes T_video=-1 in index for mp4, keeps padding correct)
+        # ------------------------------------------------------------
+        T_video = int(video.shape[1])
 
         y = self._labels_by_segment.get((clip_id, int(seg_idx)), None)
         if y is None and self.strict_labels and self._labels_by_segment:
@@ -498,13 +490,10 @@ def collate_segments_pad(items: List[Dict[str, object]]) -> Dict[str, object]:
     clip_ids = [str(it.get("clip_id", "")) for it in items]
     seg_idxs = torch.tensor([int(it.get("seg_idx", -1)) for it in items], dtype=torch.long)
 
+    # IMPORTANT: now T_video always comes from __getitem__ (real decoded T)
     T_v = max(int(it["T_video"]) for it in items)
     T_a96 = max(int(it["audio_96"].shape[1]) for it in items)
     T_a2048 = max(int(it["audio_2048"].shape[1]) for it in items)
-
-    T_video = torch.tensor([int(it["T_video"]) for it in items], dtype=torch.long)
-    T_audio_96 = torch.tensor([int(it["audio_96"].shape[1]) for it in items], dtype=torch.long)
-    T_audio_2048 = torch.tensor([int(it["audio_2048"].shape[1]) for it in items], dtype=torch.long)
 
     videos = torch.stack([_pad_video_u8(it["video_u8_cthw"], T_v) for it in items])
     aud96 = torch.stack([_pad_mel(it["audio_96"], T_a96) for it in items])
