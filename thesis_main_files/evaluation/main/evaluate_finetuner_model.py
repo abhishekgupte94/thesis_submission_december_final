@@ -153,7 +153,19 @@ def main() -> None:
         c_v_in=768,
         c_a_in=768,
     )
+    if args.ckpt_path:
+        ckpt = torch.load(args.ckpt_path, map_location="cpu")
+        sd = ckpt["state_dict"]
 
+        # strip Lightning prefix
+        sd = {k.replace("model.", ""): v for k, v in sd.items()}
+
+        missing, unexpected = model.load_state_dict(sd, strict=False)
+
+        print("[CKPT LOAD]")
+        print("  missing:", len(missing))
+        print("  unexpected:", len(unexpected))
+        print("  sample missing:", missing[:10])
     # ============================================================
     # Evaluator (Stage-2 head built lazily on first batch)
     # ============================================================
@@ -190,11 +202,11 @@ def main() -> None:
     # Run (Lightning restores weights from ckpt_path automatically)
     # ============================================================
     if args.mode == "validate":
-        trainer.validate(model=system, datamodule=dm, ckpt_path=str(ckpt_path))
+        trainer.validate(model=system, datamodule=dm)
     elif args.mode == "test":
-        trainer.test(model=system, datamodule=dm, ckpt_path=str(ckpt_path))
+        trainer.test(model=system, datamodule=dm)
     else:
-        trainer.predict(model=system, datamodule=dm, ckpt_path=str(ckpt_path))
+        trainer.predict(model=system, datamodule=dm)
 
 
 if __name__ == "__main__":
