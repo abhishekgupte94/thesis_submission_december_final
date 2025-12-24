@@ -174,6 +174,7 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Optional: path to a Lightning .ckpt to resume training from.",
     )
+    p.add_argument("--csv-index", type=str, default="segment_index_finetune.csv", required=True)
 
     return p.parse_args()
 
@@ -290,7 +291,7 @@ def main() -> None:
         segments_csv=str(
          Path(offline_root)
          / args.batch_name
-         / "segment_index_finetune.csv"
+         / args.csv_index
                 ))
     dm = SegmentDataModuleFineTune(
             cfg= cfg_dl
