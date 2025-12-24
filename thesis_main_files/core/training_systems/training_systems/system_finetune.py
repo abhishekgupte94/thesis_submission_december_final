@@ -214,7 +214,7 @@ class AVFineTuneSystem(pl.LightningModule):
         #   batch["label"] : (B,) 0/1 or float
         return self.model(
             video_in=batch["video_u8_cthw"],
-            audio_in=batch["audio"],
+            audio_in=batch["audio_96"],
         )
 
     # ============================================================
