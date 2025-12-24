@@ -468,7 +468,7 @@ def main() -> None:
         trainer = pl.Trainer(
             accelerator="gpu",
             devices=devices,
-            strategy=strategy,
+            strategy=args.strategy,
             precision=local.precision,
             max_epochs=max_epochs,
             logger=logger,
