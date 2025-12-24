@@ -174,7 +174,7 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Optional: path to a Lightning .ckpt to resume training from.",
     )
-    p.add_argument("--csv-index", type=str, default="segment_index_finetune.csv", required=True)
+    p.add_argument("--csv-index", type=str, default="segment_index_finetune.csv")
 
     return p.parse_args()
 
