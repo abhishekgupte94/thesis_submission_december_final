@@ -100,7 +100,7 @@ class AVFineTuneEvaluator(pl.LightningModule):
 
     def forward(self, batch: Dict[str, Any]) -> Dict[str, Any]:
         # Expect your model signature: model(video_in=..., audio_in=...)
-        return self.model(video_in=batch["video"], audio_in=batch["audio"])
+        return self.model(video_in=batch["video_u8_cthw"], audio_in=batch["audio_96"])
 
     def _eval_step(self, batch: Dict[str, Any], stage: str) -> Dict[str, Any]:
         out = self.forward(batch)

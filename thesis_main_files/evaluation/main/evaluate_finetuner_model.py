@@ -144,7 +144,7 @@ def main() -> None:
         video_backbone=video_backbone,
         audio_backbone=audio_backbone,
         cfg=ft_cfg,
-        c_v_in=256,
+        c_v_in=768,
         c_a_in=768,
     )
 
