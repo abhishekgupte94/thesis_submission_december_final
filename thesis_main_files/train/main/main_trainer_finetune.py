@@ -105,6 +105,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--accumulate-grad-batches", type=int, default=1)
     p.add_argument("--mem-log-every", type=int, default=50)
     p.add_argument("--smoke-test", action="store_true")
+    p.add_argument("--ckpt", type=str, required=True, help="Path to .ckpt produced by Stage-2 trainer")
 
     # precision (A100: bf16-mixed recommended)
     p.add_argument(
