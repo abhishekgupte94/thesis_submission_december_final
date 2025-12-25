@@ -591,3 +591,10 @@ class SegmentDataModuleFineTune(pl.LightningDataModule):
             collate_fn=collate_segments_pad,
             drop_last=False,
         )
+    # ============================================================
+    # [ADDED] Required by Lightning when using Trainer.predict(datamodule=...)
+    # ============================================================
+    def predict_dataloader(self) -> DataLoader:
+        return self.val_dataloader()
+
+
