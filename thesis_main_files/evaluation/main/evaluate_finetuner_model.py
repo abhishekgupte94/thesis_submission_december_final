@@ -21,7 +21,7 @@ import lightning as pl
 import torch
 from lightning.pytorch.loggers import TensorBoardLogger
 
-from scripts.dataloaders.dataloader_fine_tune import (
+from scripts.dataloaders.dataloader_boundary_module import (
      SegmentDataModuleFineTuneConfig,
   SegmentDataModuleFineTune,
 )
