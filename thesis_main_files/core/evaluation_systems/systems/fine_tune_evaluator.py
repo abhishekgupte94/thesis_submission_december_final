@@ -163,7 +163,7 @@ class AVFineTuneEvaluator(pl.LightningModule):
                     f"{stage}/bce",
                     loss,
                     prog_bar=False,
-                    on_step=False,
+                    on_step=True,
                     on_epoch=True,
                     sync_dist=True,
                 )
