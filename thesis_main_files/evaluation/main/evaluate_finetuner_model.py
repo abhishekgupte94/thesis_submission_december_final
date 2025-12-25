@@ -21,9 +21,9 @@ import lightning as pl
 import torch
 from lightning.pytorch.loggers import TensorBoardLogger
 
-from scripts.dataloaders.dataloader_boundary_module import (
-    AVPathsDataModuleConfig as SegmentDataModuleFineTuneConfig,
-    AVPathsDataModule as SegmentDataModuleFineTune,
+from scripts.dataloaders.dataloader_fine_tune import (
+     SegmentDataModuleFineTuneConfig,
+  SegmentDataModuleFineTune,
 )
 from scripts.feature_extraction.SWIN.wrapper.main_wrapper_swins import build_backbones_for_training
 
