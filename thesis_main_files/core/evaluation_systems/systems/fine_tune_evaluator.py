@@ -154,7 +154,19 @@ class AVFineTuneEvaluator(pl.LightningModule):
         if self.cfg.compute_loss and y is not None:
             y_f = y.float().view(-1, 1)  # (B,1)
             loss = self._bce(logits, y_f)
-            self.log(f"{stage}/bce", loss, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
+
+            # ============================================================
+            # [FIX] Lightning FORBIDS self.log() during predict
+            # ============================================================
+            if stage != "pred":
+                self.log(
+                    f"{stage}/bce",
+                    loss,
+                    prog_bar=False,
+                    on_step=False,
+                    on_epoch=True,
+                    sync_dist=True,
+                )
 
         # Metrics updated per batch, computed/logged per epoch
         if y is not None and stage in ("val", "test"):
