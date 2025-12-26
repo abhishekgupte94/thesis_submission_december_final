@@ -296,5 +296,9 @@ thesis_main_files/data/processed/splits/test/audio/*
 !thesis_main_files/data/processed/splits/test/audio/.gitkeep
 !thesis_main_files/data/processed/splits/test/audio/
 
+thesis_main_files/results/*
+!thesis_main_files/results/.gitkeep
+thesis_main_files/results/
+
 
 
