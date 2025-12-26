@@ -1,28 +1,35 @@
 #!/usr/bin/env python3
 """
-utils/find_last_ckpts.py
+utils/get_filepaths_of_all_tb_checkpoints.py
 
 Find Lightning "last.ckpt" for specified TensorBoardLogger run names.
 
 Typical layout:
   tb_logs/<run_name>/version_<N>/checkpoints/last.ckpt
 
+Selection modes:
+  - last-version (DEFAULT): pick the highest version_<N>
+  - newest-mtime: pick the last.ckpt with newest modified time
+
 Usage:
   # from thesis_main_files
-  PYTHONPATH="$PWD" python utils/find_last_ckpts.py --runs stage1_ssl stage2_finetune_main
+  PYTHONPATH="$PWD" python utils/get_filepaths_of_all_tb_checkpoints.py --runs stage1_ssl stage2_finetune_main
 
-  # with custom tb_logs root
-  PYTHONPATH="$PWD" python utils/find_last_ckpts.py --tb-logs tb_logs --runs stage1_ssl
+  # choose selection mode
+  PYTHONPATH="$PWD" python utils/get_filepaths_of_all_tb_checkpoints.py --runs stage1_ssl --pick newest-mtime
 
-  # print only newest per run (default), plus rsync commands
-  PYTHONPATH="$PWD" python utils/find_last_ckpts.py --runs stage1_ssl --print-rsync
+  # print rsync commands too
+  PYTHONPATH="$PWD" python utils/get_filepaths_of_all_tb_checkpoints.py --runs stage1_ssl --print-rsync
 """
 
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+_VERSION_RE = re.compile(r"^version_(\d+)$")
 
 
 def _latest_mtime(paths: List[Path]) -> Optional[Path]:
@@ -31,22 +38,61 @@ def _latest_mtime(paths: List[Path]) -> Optional[Path]:
     return max(paths, key=lambda p: p.stat().st_mtime)
 
 
-def find_last_ckpt_for_run(tb_logs: Path, run_name: str) -> Tuple[Optional[Path], List[Path]]:
+def _pick_last_version_ckpt(run_dir: Path) -> Tuple[Optional[Path], List[Path]]:
+    """
+    Picks ckpt from the highest version_<N>.
+    Returns (chosen_ckpt, all_last_ckpts_found).
+    """
+    # Find version dirs
+    version_dirs: List[Tuple[int, Path]] = []
+    for p in run_dir.iterdir():
+        if not p.is_dir():
+            continue
+        m = _VERSION_RE.match(p.name)
+        if not m:
+            continue
+        version_dirs.append((int(m.group(1)), p))
+
+    if not version_dirs:
+        # fallback: find any last.ckpt under run_dir
+        all_last = sorted(run_dir.rglob("checkpoints/last.ckpt"))
+        return _latest_mtime(all_last), all_last
+
+    # Highest version number
+    version_dirs.sort(key=lambda t: t[0])
+    last_ver_num, last_ver_dir = version_dirs[-1]
+
+    ckpt = last_ver_dir / "checkpoints" / "last.ckpt"
+    if ckpt.exists():
+        # also collect all matches for printing
+        all_last = sorted(run_dir.glob("version_*/checkpoints/last.ckpt"))
+        if not all_last:
+            all_last = [ckpt]
+        return ckpt, all_last
+
+    # If that version exists but doesn't have last.ckpt, fallback
+    all_last = sorted(run_dir.glob("version_*/checkpoints/last.ckpt"))
+    if not all_last:
+        all_last = sorted(run_dir.rglob("checkpoints/last.ckpt"))
+    return _latest_mtime(all_last), all_last
+
+
+def find_last_ckpt_for_run(tb_logs: Path, run_name: str, pick: str) -> Tuple[Optional[Path], List[Path]]:
     """
     Returns:
-      (best_guess_last_ckpt, all_last_ckpts_found)
+      (chosen_last_ckpt, all_last_ckpts_found)
     """
     run_dir = tb_logs / run_name
     if not run_dir.exists():
         return None, []
 
-    # Look for tb_logs/<run>/version_*/checkpoints/last.ckpt
-    all_last = sorted(run_dir.glob("version_*/checkpoints/last.ckpt"))
+    if pick == "last-version":
+        return _pick_last_version_ckpt(run_dir)
 
-    # Some people use "lightning_logs" naming or nested structures; as a fallback:
+    # pick == "newest-mtime"
+    all_last = sorted(run_dir.glob("version_*/checkpoints/last.ckpt"))
     if not all_last:
         all_last = sorted(run_dir.rglob("checkpoints/last.ckpt"))
-
     chosen = _latest_mtime(all_last)
     return chosen, all_last
 
@@ -55,6 +101,12 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tb-logs", type=str, default="tb_logs", help="Path to tb_logs directory (relative or absolute).")
     ap.add_argument("--runs", nargs="+", required=True, help="Run names, e.g. stage1_ssl stage2_finetune_main")
+    ap.add_argument(
+        "--pick",
+        choices=["last-version", "newest-mtime"],
+        default="last-version",
+        help="How to choose which last.ckpt to return per run.",
+    )
     ap.add_argument("--print-all", action="store_true", help="Print all matching last.ckpt files per run.")
     ap.add_argument("--print-rsync", action="store_true", help="Also print rsync commands to download chosen ckpts.")
     args = ap.parse_args()
@@ -66,8 +118,10 @@ def main() -> None:
     results: Dict[str, Optional[Path]] = {}
 
     print(f"[INFO] tb_logs: {tb_logs}")
+    print(f"[INFO] pick mode: {args.pick}")
+
     for run in args.runs:
-        chosen, all_last = find_last_ckpt_for_run(tb_logs, run)
+        chosen, all_last = find_last_ckpt_for_run(tb_logs, run, pick=args.pick)
         results[run] = chosen
 
         if chosen is None:
@@ -81,7 +135,6 @@ def main() -> None:
             for p in all_last:
                 print(f"     - {p}")
 
-    # Machine-readable section (easy to copy/paste)
     print("\n[ABS_PATHS]")
     for run, p in results.items():
         print(f"{run}: {str(p) if p else ''}")
@@ -91,8 +144,6 @@ def main() -> None:
         for run, p in results.items():
             if not p:
                 continue
-            # Build remote path by stripping local resolve assumption:
-            # If you're running this on Lambda, chosen is already the correct absolute path to use remotely.
             print(f'rsync -avP ubuntu@<LAMBDA_IP>:"{p}" ~/Downloads/{run}_last.ckpt')
 
 
