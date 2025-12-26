@@ -178,9 +178,9 @@ class AVFineTuneEvaluator(pl.LightningModule):
                 self.val_auc.update(p, y_bin)
                 self.val_f1.update(p, y_bin)
 
-                self.log("val/acc@0.5", self.val_acc, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-                self.log("val/auc", self.val_auc, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
-                self.log("val/f1@0.5", self.val_f1, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
+                self.log("val/acc@0.5", self.val_acc, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
+                self.log("val/auc", self.val_auc, on_step=True, on_epoch=True, prog_bar=False, sync_dist=True)
+                self.log("val/f1@0.5", self.val_f1, on_step=True, on_epoch=True, prog_bar=False, sync_dist=True)
 
             elif stage == "test":
                 self.test_acc.update(p, y_bin)
