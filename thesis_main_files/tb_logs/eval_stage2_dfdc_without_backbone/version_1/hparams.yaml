@@ -1,0 +1,7 @@
+cfg: !!python/object:core.evaluation_systems.systems.fine_tune_evaluator.EvalConfig
+  compute_loss: true
+  dropout: 0.1
+  mlp_hidden: 128
+  pool: mean
+  save_preds_path: outputs/dfdc_on_lavdf_fresh_train/eval_stage2_dfdc_without_backbone.jsonl
+  use_layernorm: false
